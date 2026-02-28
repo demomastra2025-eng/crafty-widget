@@ -1,0 +1,27 @@
+## Getting Started
+
+First, run the development server:
+
+```bash
+pnpm dev
+```
+
+Open [http://localhost:3001](http://localhost:3001) with your browser to see the result.
+
+## Environment
+
+Set Postgres connection for chat data:
+
+```
+DATABASE_URL=postgresql://POSTGRES_USERNAME:POSTGRES_PASSWORD@localhost:5432/POSTGRES_DATABASE
+```
+
+
+[![](https://raw.githubusercontent.com/shadcn-examples/shadcn-ui-dashboard/refs/heads/main/public/hero.png)](https://shadcnuidashboard.com/)
+
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

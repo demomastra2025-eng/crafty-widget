@@ -1,0 +1,34 @@
+services:
+  crafty-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crafty_client
+    restart: unless-stopped
+    user: "node"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1777
+      - /app/.next/cache:uid=1000,gid=1000,mode=700
+    pids_limit: 200
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://${POSTGRES_USERNAME:-postgres}:${POSTGRES_PASSWORD:-postgres}@host.docker.internal:${POSTGRES_PORT:-5432}/${POSTGRES_DATABASE:-chatwoot_dev}?sslmode=disable
+    ports:
+      - "127.0.0.1:3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    networks:
+      - frontend-internal
+
+networks:
+  frontend-internal:
+    name: frontend-internal
+    driver: bridge
