@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const AUTH_COOKIE = "crafty_auth";
 const PUBLIC_PATHS = new Set(["/", "/contact", "/roadmap", "/terms-conditions", "/logo.png"]);
-const IFRAME_ALLOWED_PREFIXES = ["/chatwoot", "/calendar"];
+const IFRAME_ALLOWED_PREFIXES = ["/chatwoot", "/calendar", "/widgets"];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -13,7 +13,8 @@ export function middleware(req: NextRequest) {
     pathname.startsWith("/favicon.ico") ||
     pathname.startsWith("/robots.txt") ||
     pathname.startsWith("/sitemap") ||
-    pathname.startsWith("/fonts")
+    pathname.startsWith("/fonts") ||
+    pathname.startsWith("/mocks")
   ) {
     return NextResponse.next();
   }

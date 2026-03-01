@@ -5,6 +5,11 @@ import type { PoolClient } from "pg";
 
 type BookingView = "day" | "week" | "month";
 type BookingStatus = "scheduled" | "confirmed" | "completed" | "cancelled" | "no_show";
+type BookingPaymentMethod = "kaspi_transfer" | "kaspi_qr" | "cash" | "bank_transfer";
+type BookingPaymentStatus = "awaiting_payment" | "prepaid" | "paid" | "cancelled";
+type BookingExpenseStatus = "unpaid" | "paid";
+type BookingCompensationType = "percent" | "fixed";
+type BookingPaymentKind = "prepaid" | "payment" | "adjustment";
 
 type BookingEmployee = {
   id: string;
@@ -14,6 +19,8 @@ type BookingEmployee = {
   color?: string | null;
   timezone: string;
   slotDurationMin: number;
+  compensationType: BookingCompensationType | string;
+  compensationValue: number;
   isActive: boolean;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -77,6 +84,35 @@ type BookingAppointment = {
   externalRef?: string | null;
   idempotencyKey?: string | null;
   createdByUserId?: string | null;
+  serviceAmount: number;
+  prepaidAmount: number;
+  prepaidPaymentMethod?: BookingPaymentMethod | string | null;
+  settlementAmount: number;
+  settlementPaymentMethod?: BookingPaymentMethod | string | null;
+  paymentStatus: BookingPaymentStatus | string;
+};
+
+type BookingExpense = {
+  id: string;
+  companyId: string;
+  appointmentId: string;
+  employeeId: string;
+  amount: number;
+  status: BookingExpenseStatus | string;
+  paidAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+type BookingPayment = {
+  id: string;
+  companyId: string;
+  appointmentId: string;
+  amount: number;
+  paymentMethod: BookingPaymentMethod | string;
+  paymentKind: BookingPaymentKind | string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 type BookingSlot = {
@@ -95,6 +131,8 @@ type BookingCalendarViewResponse = {
   holidays: BookingHoliday[];
   timeOff: BookingTimeOff[];
   appointments: BookingAppointment[];
+  payments: BookingPayment[];
+  expenses: BookingExpense[];
   slots: BookingSlot[];
 };
 
@@ -112,6 +150,8 @@ type EmployeeInput = {
   color?: string;
   timezone?: string;
   slotDurationMin?: number;
+  compensationType?: BookingCompensationType | string;
+  compensationValue?: number;
 };
 
 type UpdateEmployeeInput = {
@@ -119,6 +159,8 @@ type UpdateEmployeeInput = {
   specialty?: string | null;
   color?: string | null;
   slotDurationMin?: number;
+  compensationType?: BookingCompensationType | string;
+  compensationValue?: number;
   isActive?: boolean;
 };
 
@@ -135,6 +177,12 @@ type CreateAppointmentInput = {
   externalRef?: string;
   idempotencyKey?: string;
   createdByUserId?: string;
+  serviceAmount?: number;
+  prepaidAmount?: number;
+  prepaidPaymentMethod?: BookingPaymentMethod | string;
+  settlementAmount?: number;
+  settlementPaymentMethod?: BookingPaymentMethod | string;
+  paymentStatus?: BookingPaymentStatus | string;
 };
 
 type UpdateAppointmentInput = Partial<CreateAppointmentInput> & {
@@ -150,6 +198,13 @@ type CreateHolidayInput = {
   isWorkingDayOverride?: boolean;
 };
 
+type UpdateHolidayInput = {
+  date?: string;
+  title?: string;
+  isRecurringYearly?: boolean;
+  isWorkingDayOverride?: boolean;
+};
+
 type CreateTimeOffInput = {
   employeeId?: string | null;
   type: string;
@@ -157,6 +212,15 @@ type CreateTimeOffInput = {
   endsAt: string;
   title?: string;
   notes?: string;
+};
+
+type UpdateTimeOffInput = {
+  employeeId?: string | null;
+  type?: string;
+  startsAt?: string;
+  endsAt?: string;
+  title?: string | null;
+  notes?: string | null;
 };
 
 type CalendarViewParams = {
@@ -187,6 +251,15 @@ type EmployeeRow = {
   timezone: string;
   slot_duration_min: number;
   is_active: boolean;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type EmployeeCompensationRow = {
+  employee_id: string;
+  company_id: string;
+  compensation_type: BookingCompensationType | string;
+  compensation_value: number;
   created_at: Date | string | null;
   updated_at: Date | string | null;
 };
@@ -254,13 +327,54 @@ type AppointmentRow = {
   updated_at: Date | string | null;
 };
 
+type AppointmentFinanceRow = {
+  appointment_id: string;
+  company_id: string;
+  service_amount: number;
+  prepaid_amount: number;
+  prepaid_payment_method: BookingPaymentMethod | string | null;
+  settlement_amount: number;
+  settlement_payment_method: BookingPaymentMethod | string | null;
+  payment_status: BookingPaymentStatus | string;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type AppointmentExpenseRow = {
+  id: string;
+  company_id: string;
+  appointment_id: string;
+  employee_id: string;
+  amount: number;
+  status: BookingExpenseStatus | string;
+  paid_at: Date | string | null;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type AppointmentPaymentRow = {
+  id: string;
+  company_id: string;
+  appointment_id: string;
+  amount: number;
+  payment_method: BookingPaymentMethod | string;
+  payment_kind: BookingPaymentKind | string;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
 const DEFAULT_TIMEZONE = "Asia/Almaty";
-const DEFAULT_SLOT_STEP_MIN = 10;
+const DEFAULT_SLOT_STEP_MIN = 5;
 const DEFAULT_WORKDAY_WEEKDAYS = [1, 2, 3, 4, 5] as const;
 const DEFAULT_WORKDAY_START_MINUTE = 9 * 60;
 const DEFAULT_WORKDAY_END_MINUTE = 18 * 60;
 const ACTIVE_APPOINTMENT_STATUS_SQL = "status <> 'cancelled'";
 const BOOKING_STATUSES: BookingStatus[] = ["scheduled", "confirmed", "completed", "cancelled", "no_show"];
+const BOOKING_PAYMENT_METHODS: BookingPaymentMethod[] = ["kaspi_transfer", "kaspi_qr", "cash", "bank_transfer"];
+const BOOKING_PAYMENT_STATUSES: BookingPaymentStatus[] = ["awaiting_payment", "prepaid", "paid", "cancelled"];
+const BOOKING_EXPENSE_STATUSES: BookingExpenseStatus[] = ["unpaid", "paid"];
+const BOOKING_COMPENSATION_TYPES: BookingCompensationType[] = ["percent", "fixed"];
+const BOOKING_PAYMENT_KINDS: BookingPaymentKind[] = ["prepaid", "payment", "adjustment"];
 
 let schemaReadyPromise: Promise<void> | null = null;
 const HOLIDAY_REQUIRED_COLUMNS = ["is_recurring_yearly", "is_working_day_override"] as const;
@@ -349,6 +463,60 @@ function parseStatus(value: unknown): BookingStatus {
     throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported status '${status}'`);
   }
   return status;
+}
+
+function clampMoney(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(0, Math.round(fallback));
+  return Math.max(0, Math.round(n));
+}
+
+function parsePaymentMethod(value: unknown, fieldName = "paymentMethod"): BookingPaymentMethod | null {
+  const method = normalizeOptionalText(value);
+  if (!method) return null;
+  const normalized = method.toLowerCase() as BookingPaymentMethod;
+  if (!BOOKING_PAYMENT_METHODS.includes(normalized)) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported ${fieldName} '${normalized}'`);
+  }
+  return normalized;
+}
+
+function parsePaymentStatus(value: unknown): BookingPaymentStatus {
+  const status = normalizeRequiredText(value, "paymentStatus").toLowerCase() as BookingPaymentStatus;
+  if (!BOOKING_PAYMENT_STATUSES.includes(status)) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported paymentStatus '${status}'`);
+  }
+  return status;
+}
+
+function parseExpenseStatus(value: unknown): BookingExpenseStatus {
+  const status = normalizeRequiredText(value, "expenseStatus").toLowerCase() as BookingExpenseStatus;
+  if (!BOOKING_EXPENSE_STATUSES.includes(status)) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported expenseStatus '${status}'`);
+  }
+  return status;
+}
+
+function parseCompensationType(value: unknown): BookingCompensationType {
+  const type = normalizeRequiredText(value, "compensationType").toLowerCase() as BookingCompensationType;
+  if (!BOOKING_COMPENSATION_TYPES.includes(type)) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported compensationType '${type}'`);
+  }
+  return type;
+}
+
+function derivePaymentStatus(
+  serviceAmount: number,
+  prepaidAmount: number,
+  settlementAmount: number,
+  requestedStatus?: BookingPaymentStatus | null,
+): BookingPaymentStatus {
+  if (requestedStatus === "cancelled") return "cancelled";
+
+  const totalReceived = prepaidAmount + settlementAmount;
+  if (totalReceived <= 0) return "awaiting_payment";
+  if (serviceAmount <= 0 || totalReceived >= serviceAmount) return "paid";
+  return "prepaid";
 }
 
 function normalizeIin(value: string | null): string | null {
@@ -524,13 +692,15 @@ function normalizeDateOnly(value: string | Date | null | undefined): string {
   if (!value) return "";
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return "";
-    return value.toISOString().slice(0, 10);
+    const parts = getTzParts(value, DEFAULT_TIMEZONE);
+    return toDateKey(parts.year, parts.month, parts.day);
   }
   const text = String(value).trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
   const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10);
+  const parts = getTzParts(parsed, DEFAULT_TIMEZONE);
+  return toDateKey(parts.year, parts.month, parts.day);
 }
 
 function holidayMatchesDate(
@@ -547,7 +717,7 @@ function holidayMatchesDate(
   return holidayDate.slice(5) === monthDay(dateKey);
 }
 
-function mapEmployee(row: EmployeeRow): BookingEmployee {
+function mapEmployee(row: EmployeeRow, compensation?: EmployeeCompensationRow | null): BookingEmployee {
   return {
     id: row.id,
     companyId: row.company_id,
@@ -556,6 +726,8 @@ function mapEmployee(row: EmployeeRow): BookingEmployee {
     color: row.color,
     timezone: row.timezone || DEFAULT_TIMEZONE,
     slotDurationMin: row.slot_duration_min,
+    compensationType: compensation?.compensation_type || "percent",
+    compensationValue: compensation?.compensation_value ?? 0,
     isActive: row.is_active,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
@@ -610,7 +782,7 @@ function mapTimeOff(row: TimeOffRow): BookingTimeOff {
   };
 }
 
-function mapAppointment(row: AppointmentRow): BookingAppointment {
+function mapAppointment(row: AppointmentRow, finance?: AppointmentFinanceRow | null): BookingAppointment {
   return {
     id: row.id,
     companyId: row.company_id,
@@ -629,6 +801,41 @@ function mapAppointment(row: AppointmentRow): BookingAppointment {
     externalRef: row.external_ref,
     idempotencyKey: row.idempotency_key,
     createdByUserId: row.created_by_user_id,
+    serviceAmount: finance?.service_amount ?? 0,
+    prepaidAmount: finance?.prepaid_amount ?? 0,
+    prepaidPaymentMethod: finance?.prepaid_payment_method ?? null,
+    settlementAmount: finance?.settlement_amount ?? 0,
+    settlementPaymentMethod: finance?.settlement_payment_method ?? null,
+    paymentStatus: finance?.payment_status || "awaiting_payment",
+  };
+}
+
+function mapExpense(row: AppointmentExpenseRow): BookingExpense {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    appointmentId: row.appointment_id,
+    employeeId: row.employee_id,
+    amount: row.amount,
+    status: row.status,
+    paidAt: toIso(row.paid_at),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function mapPayment(row: AppointmentPaymentRow): BookingPayment {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    appointmentId: row.appointment_id,
+    amount: row.amount,
+    paymentMethod: row.payment_method,
+    paymentKind: BOOKING_PAYMENT_KINDS.includes(row.payment_kind as BookingPaymentKind)
+      ? (row.payment_kind as BookingPaymentKind)
+      : "payment",
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
   };
 }
 
@@ -722,6 +929,51 @@ async function ensureBookingSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
+        CREATE TABLE IF NOT EXISTS calendar.employee_compensation (
+          employee_id TEXT PRIMARY KEY REFERENCES calendar.employees(id) ON DELETE CASCADE,
+          company_id TEXT NOT NULL,
+          compensation_type TEXT NOT NULL DEFAULT 'percent',
+          compensation_value INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS calendar.appointment_finance (
+          appointment_id TEXT PRIMARY KEY REFERENCES calendar.appointments(id) ON DELETE CASCADE,
+          company_id TEXT NOT NULL,
+          service_amount INTEGER NOT NULL DEFAULT 0,
+          prepaid_amount INTEGER NOT NULL DEFAULT 0,
+          prepaid_payment_method TEXT,
+          settlement_amount INTEGER NOT NULL DEFAULT 0,
+          settlement_payment_method TEXT,
+          payment_status TEXT NOT NULL DEFAULT 'awaiting_payment',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS calendar.appointment_expenses (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          appointment_id TEXT NOT NULL UNIQUE REFERENCES calendar.appointments(id) ON DELETE CASCADE,
+          employee_id TEXT NOT NULL REFERENCES calendar.employees(id) ON DELETE CASCADE,
+          amount INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'unpaid',
+          paid_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS calendar.appointment_payments (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          appointment_id TEXT NOT NULL REFERENCES calendar.appointments(id) ON DELETE CASCADE,
+          amount INTEGER NOT NULL DEFAULT 0,
+          payment_method TEXT NOT NULL,
+          payment_kind TEXT NOT NULL DEFAULT 'payment',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
         CREATE INDEX IF NOT EXISTS idx_calendar_employees_company_active
           ON calendar.employees (company_id, is_active);
 
@@ -739,6 +991,26 @@ async function ensureBookingSchema() {
 
         CREATE INDEX IF NOT EXISTS idx_calendar_appointments_company_employee_range
           ON calendar.appointments (company_id, employee_id, starts_at, ends_at);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_employee_compensation_company_employee
+          ON calendar.employee_compensation (company_id, employee_id);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_appointment_finance_company_status
+          ON calendar.appointment_finance (company_id, payment_status);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_appointment_expenses_company_status
+          ON calendar.appointment_expenses (company_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_appointment_payments_company_appointment_created
+          ON calendar.appointment_payments (company_id, appointment_id, created_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_appointment_payments_prepaid
+          ON calendar.appointment_payments (appointment_id, payment_kind)
+          WHERE payment_kind = 'prepaid';
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_appointment_payments_adjustment
+          ON calendar.appointment_payments (appointment_id, payment_kind)
+          WHERE payment_kind = 'adjustment';
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_appointments_external_ref
           ON calendar.appointments (company_id, external_ref)
@@ -801,6 +1073,477 @@ async function loadEmployeeTx(client: PoolClient, companyId: string, employeeId:
     throw new BookingServiceError(404, "EMPLOYEE_NOT_FOUND", "Employee not found");
   }
   return employee;
+}
+
+async function loadEmployeeCompensationTx(client: PoolClient, companyId: string, employeeId: string) {
+  const { rows } = await client.query<EmployeeCompensationRow>(
+    `
+      SELECT *
+      FROM calendar.employee_compensation
+      WHERE company_id = $1 AND employee_id = $2
+      LIMIT 1
+    `,
+    [companyId, employeeId],
+  );
+  return rows[0] || null;
+}
+
+async function upsertEmployeeCompensationTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    employeeId: string;
+    compensationType: BookingCompensationType | string;
+    compensationValue: number;
+  },
+) {
+  const compensationType = parseCompensationType(params.compensationType);
+  const compensationValue = clampMoney(params.compensationValue);
+
+  const { rows } = await client.query<EmployeeCompensationRow>(
+    `
+      INSERT INTO calendar.employee_compensation (
+        employee_id, company_id, compensation_type, compensation_value, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
+      ON CONFLICT (employee_id)
+      DO UPDATE SET
+        company_id = EXCLUDED.company_id,
+        compensation_type = EXCLUDED.compensation_type,
+        compensation_value = EXCLUDED.compensation_value,
+        updated_at = NOW()
+      RETURNING *
+    `,
+    [params.employeeId, params.companyId, compensationType, compensationValue],
+  );
+
+  return rows[0] || null;
+}
+
+async function loadAppointmentFinanceTx(client: PoolClient, companyId: string, appointmentId: string) {
+  const { rows } = await client.query<AppointmentFinanceRow>(
+    `
+      SELECT *
+      FROM calendar.appointment_finance
+      WHERE company_id = $1 AND appointment_id = $2
+      LIMIT 1
+    `,
+    [companyId, appointmentId],
+  );
+  return rows[0] || null;
+}
+
+async function loadAppointmentExpenseByAppointmentTx(client: PoolClient, companyId: string, appointmentId: string) {
+  const { rows } = await client.query<AppointmentExpenseRow>(
+    `
+      SELECT *
+      FROM calendar.appointment_expenses
+      WHERE company_id = $1 AND appointment_id = $2
+      LIMIT 1
+    `,
+    [companyId, appointmentId],
+  );
+  return rows[0] || null;
+}
+
+async function loadAppointmentPaymentsTx(client: PoolClient, companyId: string, appointmentIds: string[]) {
+  if (!appointmentIds.length) return [];
+
+  const { rows } = await client.query<AppointmentPaymentRow>(
+    `
+      SELECT *
+      FROM calendar.appointment_payments
+      WHERE company_id = $1
+        AND appointment_id = ANY($2::text[])
+      ORDER BY created_at ASC, id ASC
+    `,
+    [companyId, appointmentIds],
+  );
+
+  return rows;
+}
+
+async function loadAppointmentPaymentByKindTx(
+  client: PoolClient,
+  companyId: string,
+  appointmentId: string,
+  paymentKind: BookingPaymentKind,
+) {
+  const { rows } = await client.query<AppointmentPaymentRow>(
+    `
+      SELECT *
+      FROM calendar.appointment_payments
+      WHERE company_id = $1
+        AND appointment_id = $2
+        AND payment_kind = $3
+      LIMIT 1
+    `,
+    [companyId, appointmentId, paymentKind],
+  );
+
+  return rows[0] || null;
+}
+
+async function upsertAppointmentPaymentByKindTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    appointmentId: string;
+    amount: number;
+    paymentMethod: BookingPaymentMethod | string | null;
+    paymentKind: BookingPaymentKind;
+  },
+) {
+  const amount = clampMoney(params.amount);
+  const existing = await loadAppointmentPaymentByKindTx(
+    client,
+    params.companyId,
+    params.appointmentId,
+    params.paymentKind,
+  );
+
+  if (amount <= 0 || !params.paymentMethod) {
+    if (existing) {
+      await client.query(
+        `
+          DELETE FROM calendar.appointment_payments
+          WHERE company_id = $1
+            AND appointment_id = $2
+            AND payment_kind = $3
+        `,
+        [params.companyId, params.appointmentId, params.paymentKind],
+      );
+    }
+    return null;
+  }
+
+  if (existing) {
+    const { rows } = await client.query<AppointmentPaymentRow>(
+      `
+        UPDATE calendar.appointment_payments
+        SET
+          amount = $4,
+          payment_method = $5,
+          updated_at = NOW()
+        WHERE company_id = $1
+          AND appointment_id = $2
+          AND payment_kind = $3
+        RETURNING *
+      `,
+      [params.companyId, params.appointmentId, params.paymentKind, amount, params.paymentMethod],
+    );
+    return rows[0] || existing;
+  }
+
+  const { rows } = await client.query<AppointmentPaymentRow>(
+    `
+      INSERT INTO calendar.appointment_payments (
+        id,
+        company_id,
+        appointment_id,
+        amount,
+        payment_method,
+        payment_kind,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      RETURNING *
+    `,
+    [randomId(), params.companyId, params.appointmentId, amount, params.paymentMethod, params.paymentKind],
+  );
+
+  return rows[0] || null;
+}
+
+async function insertAppointmentPaymentTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    appointmentId: string;
+    amount: number;
+    paymentMethod: BookingPaymentMethod | string;
+    paymentKind: BookingPaymentKind;
+  },
+) {
+  const amount = clampMoney(params.amount);
+  if (amount <= 0) return null;
+
+  const { rows } = await client.query<AppointmentPaymentRow>(
+    `
+      INSERT INTO calendar.appointment_payments (
+        id,
+        company_id,
+        appointment_id,
+        amount,
+        payment_method,
+        payment_kind,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+      RETURNING *
+    `,
+    [randomId(), params.companyId, params.appointmentId, amount, params.paymentMethod, params.paymentKind],
+  );
+
+  return rows[0] || null;
+}
+
+async function syncAppointmentPaymentJournalTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    appointmentId: string;
+    prepaidAmount: number;
+    prepaidPaymentMethod: BookingPaymentMethod | string | null;
+    settlementAmount: number;
+    settlementPaymentMethod: BookingPaymentMethod | string | null;
+  },
+) {
+  const prepaidAmount = clampMoney(params.prepaidAmount);
+  await upsertAppointmentPaymentByKindTx(client, {
+    companyId: params.companyId,
+    appointmentId: params.appointmentId,
+    amount: prepaidAmount,
+    paymentMethod: params.prepaidPaymentMethod,
+    paymentKind: "prepaid",
+  });
+
+  const { rows } = await client.query<{ total: string | number | null }>(
+    `
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM calendar.appointment_payments
+      WHERE company_id = $1
+        AND appointment_id = $2
+        AND payment_kind = 'payment'
+    `,
+    [params.companyId, params.appointmentId],
+  );
+  const manualPaymentTotal = clampMoney(rows[0]?.total ?? 0);
+  const settlementAmount = clampMoney(params.settlementAmount);
+
+  if (settlementAmount < manualPaymentTotal) {
+    throw new BookingServiceError(
+      400,
+      "VALIDATION_ERROR",
+      "settlementAmount cannot be less than the total of recorded payments",
+    );
+  }
+
+  const adjustmentAmount = settlementAmount - manualPaymentTotal;
+  await upsertAppointmentPaymentByKindTx(client, {
+    companyId: params.companyId,
+    appointmentId: params.appointmentId,
+    amount: adjustmentAmount,
+    paymentMethod: params.settlementPaymentMethod,
+    paymentKind: "adjustment",
+  });
+}
+
+function computeExpenseAmount(
+  finance: Pick<AppointmentFinanceRow, "service_amount">,
+  compensation: Pick<EmployeeCompensationRow, "compensation_type" | "compensation_value"> | null,
+) {
+  if (!compensation) return 0;
+  if (compensation.compensation_type === "fixed") {
+    return clampMoney(compensation.compensation_value);
+  }
+  return Math.max(0, Math.round((clampMoney(finance.service_amount) * clampMoney(compensation.compensation_value)) / 100));
+}
+
+async function upsertAppointmentFinanceTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    appointmentId: string;
+    serviceAmount: number;
+    prepaidAmount: number;
+    prepaidPaymentMethod: BookingPaymentMethod | string | null;
+    settlementAmount: number;
+    settlementPaymentMethod: BookingPaymentMethod | string | null;
+    paymentStatus: BookingPaymentStatus;
+  },
+) {
+  const { rows } = await client.query<AppointmentFinanceRow>(
+    `
+      INSERT INTO calendar.appointment_finance (
+        appointment_id,
+        company_id,
+        service_amount,
+        prepaid_amount,
+        prepaid_payment_method,
+        settlement_amount,
+        settlement_payment_method,
+        payment_status,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      ON CONFLICT (appointment_id)
+      DO UPDATE SET
+        company_id = EXCLUDED.company_id,
+        service_amount = EXCLUDED.service_amount,
+        prepaid_amount = EXCLUDED.prepaid_amount,
+        prepaid_payment_method = EXCLUDED.prepaid_payment_method,
+        settlement_amount = EXCLUDED.settlement_amount,
+        settlement_payment_method = EXCLUDED.settlement_payment_method,
+        payment_status = EXCLUDED.payment_status,
+        updated_at = NOW()
+      RETURNING *
+    `,
+    [
+      params.appointmentId,
+      params.companyId,
+      clampMoney(params.serviceAmount),
+      clampMoney(params.prepaidAmount),
+      params.prepaidPaymentMethod,
+      clampMoney(params.settlementAmount),
+      params.settlementPaymentMethod,
+      params.paymentStatus,
+    ],
+  );
+
+  return rows[0];
+}
+
+async function syncExpenseForAppointmentTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    appointment: AppointmentRow;
+    finance: AppointmentFinanceRow;
+  },
+) {
+  const existingExpense = await loadAppointmentExpenseByAppointmentTx(client, params.companyId, params.appointment.id);
+
+  if (params.finance.payment_status !== "paid") {
+    if (existingExpense && existingExpense.status !== "paid") {
+      await client.query(
+        `
+          DELETE FROM calendar.appointment_expenses
+          WHERE company_id = $1 AND appointment_id = $2
+        `,
+        [params.companyId, params.appointment.id],
+      );
+    }
+    return existingExpense;
+  }
+
+  const compensation = await loadEmployeeCompensationTx(client, params.companyId, params.appointment.employee_id);
+  const amount = computeExpenseAmount(params.finance, compensation);
+
+  if (existingExpense) {
+    if (existingExpense.status === "paid") {
+      return existingExpense;
+    }
+
+    const { rows } = await client.query<AppointmentExpenseRow>(
+      `
+        UPDATE calendar.appointment_expenses
+        SET
+          employee_id = $3,
+          amount = $4,
+          status = 'unpaid',
+          updated_at = NOW()
+        WHERE company_id = $1 AND appointment_id = $2
+        RETURNING *
+      `,
+      [params.companyId, params.appointment.id, params.appointment.employee_id, amount],
+    );
+    return rows[0] || existingExpense;
+  }
+
+  const { rows } = await client.query<AppointmentExpenseRow>(
+    `
+      INSERT INTO calendar.appointment_expenses (
+        id, company_id, appointment_id, employee_id, amount, status, created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, 'unpaid', NOW(), NOW())
+      RETURNING *
+    `,
+    [randomId(), params.companyId, params.appointment.id, params.appointment.employee_id, amount],
+  );
+  return rows[0] || null;
+}
+
+async function loadHolidayTx(client: PoolClient, companyId: string, holidayId: string) {
+  const { rows } = await client.query<HolidayRow>(
+    `
+      SELECT *
+      FROM calendar.holidays
+      WHERE company_id = $1 AND id = $2
+      LIMIT 1
+    `,
+    [companyId, holidayId],
+  );
+  const holiday = rows[0];
+  if (!holiday) {
+    throw new BookingServiceError(404, "HOLIDAY_NOT_FOUND", "Holiday not found");
+  }
+  return holiday;
+}
+
+async function assertHolidayUniquenessTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    date: string;
+    isRecurringYearly: boolean;
+    ignoreHolidayId?: string | null;
+  },
+) {
+  const { companyId, date, isRecurringYearly, ignoreHolidayId } = params;
+
+  await client.query(
+    `SELECT pg_advisory_xact_lock(hashtext($1 || ':holiday:' || to_char($2::date, 'MM-DD'))::bigint)`,
+    [companyId, date],
+  );
+
+  const { rows } = await client.query<{ id: string }>(
+    `
+      SELECT id
+      FROM calendar.holidays
+      WHERE company_id = $1
+        AND ($4::text IS NULL OR id <> $4)
+        AND (
+          (is_recurring_yearly = FALSE AND date = $2::date)
+          OR (is_recurring_yearly = TRUE AND to_char(date, 'MM-DD') = to_char($2::date, 'MM-DD'))
+          OR (
+            $3::boolean = TRUE
+            AND is_recurring_yearly = FALSE
+            AND to_char(date, 'MM-DD') = to_char($2::date, 'MM-DD')
+          )
+        )
+      LIMIT 1
+    `,
+    [companyId, date, isRecurringYearly, ignoreHolidayId || null],
+  );
+
+  if (rows.length) {
+    throw new BookingServiceError(
+      409,
+      "HOLIDAY_CONFLICT",
+      "Holiday already exists for this company on this day",
+    );
+  }
+}
+
+async function loadTimeOffTx(client: PoolClient, companyId: string, timeOffId: string) {
+  const { rows } = await client.query<TimeOffRow>(
+    `
+      SELECT *
+      FROM calendar.time_off
+      WHERE company_id = $1 AND id = $2
+      LIMIT 1
+    `,
+    [companyId, timeOffId],
+  );
+  const item = rows[0];
+  if (!item) {
+    throw new BookingServiceError(404, "TIME_OFF_NOT_FOUND", "Time off not found");
+  }
+  return item;
 }
 
 function normalizeRuleInput(rule: BookingRuleRangeInput, allowTitle: boolean) {
@@ -1017,7 +1760,7 @@ function buildSlots(params: {
         for (
           let startMinute = work.startMinute;
           startMinute + durationMin <= work.endMinute;
-          startMinute += employeeDurationMin
+          startMinute += DEFAULT_SLOT_STEP_MIN
         ) {
           const endMinute = startMinute + durationMin;
           const overlapsBreak = breaks.some(
@@ -1073,7 +1816,23 @@ export async function listBookingEmployees(companyIdRaw: string, params: Employe
       `,
       [companyId, parseBool(params.includeInactive, false)],
     );
-    return { employees: rows.map(mapEmployee) };
+    const employeeIds = rows.map((row) => row.id);
+    const compensationRows = employeeIds.length
+      ? (
+          await client.query<EmployeeCompensationRow>(
+            `
+              SELECT *
+              FROM calendar.employee_compensation
+              WHERE company_id = $1
+                AND employee_id = ANY($2::text[])
+            `,
+            [companyId, employeeIds],
+          )
+        ).rows
+      : [];
+    const compensationByEmployeeId = new Map(compensationRows.map((row) => [row.employee_id, row] as const));
+
+    return { employees: rows.map((row) => mapEmployee(row, compensationByEmployeeId.get(row.id) || null)) };
   });
 }
 
@@ -1084,6 +1843,8 @@ export async function createBookingEmployee(companyIdRaw: string, payload: Emplo
   const specialty = normalizeOptionalText(payload.specialty);
   const color = normalizeOptionalText(payload.color);
   const timezone = DEFAULT_TIMEZONE;
+  const compensationType = payload.compensationType ? parseCompensationType(payload.compensationType) : "percent";
+  const compensationValue = clampMoney(payload.compensationValue, 0);
   const rawSlotDuration = Number(payload.slotDurationMin);
   if (
     payload.slotDurationMin !== undefined &&
@@ -1125,7 +1886,14 @@ export async function createBookingEmployee(companyIdRaw: string, payload: Emplo
       );
     }
 
-    return { employee: mapEmployee(rows[0]) };
+    const compensation = await upsertEmployeeCompensationTx(client, {
+      companyId,
+      employeeId: id,
+      compensationType,
+      compensationValue,
+    });
+
+    return { employee: mapEmployee(rows[0], compensation) };
   });
 }
 
@@ -1151,6 +1919,7 @@ export async function updateBookingEmployee(companyIdRaw: string, employeeId: st
 
   return withClient(async (client) => {
     const existing = await loadEmployeeTx(client, companyId, employeeIdNormalized);
+    const existingCompensation = await loadEmployeeCompensationTx(client, companyId, employeeIdNormalized);
     const name = payload.name !== undefined ? normalizeRequiredText(payload.name, "name") : existing.name;
     const specialty = payload.specialty !== undefined ? normalizeOptionalText(payload.specialty) : existing.specialty;
     const color = payload.color !== undefined ? normalizeOptionalText(payload.color) : existing.color;
@@ -1160,6 +1929,14 @@ export async function updateBookingEmployee(companyIdRaw: string, employeeId: st
         : existing.slot_duration_min;
     const isActive =
       payload.isActive !== undefined ? parseBool(payload.isActive, existing.is_active) : existing.is_active;
+    const compensationType =
+      payload.compensationType !== undefined
+        ? parseCompensationType(payload.compensationType)
+        : existingCompensation?.compensation_type || "percent";
+    const compensationValue =
+      payload.compensationValue !== undefined
+        ? clampMoney(payload.compensationValue)
+        : existingCompensation?.compensation_value ?? 0;
 
     const { rows } = await client.query<EmployeeRow>(
       `
@@ -1177,7 +1954,14 @@ export async function updateBookingEmployee(companyIdRaw: string, employeeId: st
       [companyId, employeeIdNormalized, name, specialty, color, slotDurationMin, isActive],
     );
 
-    return { employee: mapEmployee(rows[0]) };
+    const compensation = await upsertEmployeeCompensationTx(client, {
+      companyId,
+      employeeId: employeeIdNormalized,
+      compensationType,
+      compensationValue,
+    });
+
+    return { employee: mapEmployee(rows[0], compensation) };
   });
 }
 
@@ -1313,7 +2097,21 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
       [companyId, employeeIds],
     );
 
-    const employees = employeeRows.map(mapEmployee);
+    const compensationRows = employeeRows.length
+      ? (
+          await client.query<EmployeeCompensationRow>(
+            `
+              SELECT *
+              FROM calendar.employee_compensation
+              WHERE company_id = $1
+                AND employee_id = ANY($2::text[])
+            `,
+            [companyId, employeeRows.map((row) => row.id)],
+          )
+        ).rows
+      : [];
+    const compensationByEmployeeId = new Map(compensationRows.map((row) => [row.employee_id, row] as const));
+    const employees = employeeRows.map((row) => mapEmployee(row, compensationByEmployeeId.get(row.id) || null));
     if (!employees.length) {
       return {
         view,
@@ -1324,6 +2122,8 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
         holidays: [],
         timeOff: [],
         appointments: [],
+        payments: [],
+        expenses: [],
         slots: [],
       };
     }
@@ -1395,11 +2195,44 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
       [companyId, targetEmployeeIds, from.toISOString(), to.toISOString()],
     );
 
+    const financeRows = appointmentRows.length
+      ? (
+          await client.query<AppointmentFinanceRow>(
+            `
+              SELECT *
+              FROM calendar.appointment_finance
+              WHERE company_id = $1
+                AND appointment_id = ANY($2::text[])
+            `,
+            [companyId, appointmentRows.map((row) => row.id)],
+          )
+        ).rows
+      : [];
+    const financeByAppointmentId = new Map(financeRows.map((row) => [row.appointment_id, row] as const));
+    const paymentRows = await loadAppointmentPaymentsTx(client, companyId, appointmentRows.map((row) => row.id));
+
+    const expenseRows = appointmentRows.length
+      ? (
+          await client.query<AppointmentExpenseRow>(
+            `
+              SELECT expense.*
+              FROM calendar.appointment_expenses AS expense
+              WHERE expense.company_id = $1
+                AND expense.appointment_id = ANY($2::text[])
+              ORDER BY expense.created_at ASC
+            `,
+            [companyId, appointmentRows.map((row) => row.id)],
+          )
+        ).rows
+      : [];
+
     const workRules = workRuleRows.map(mapWorkRule);
     const breakRules = breakRuleRows.map(mapBreakRule);
     const holidays = holidayRows.map(mapHoliday);
     const timeOff = timeOffRows.map(mapTimeOff);
-    const appointments = appointmentRows.map(mapAppointment);
+    const appointments = appointmentRows.map((row) => mapAppointment(row, financeByAppointmentId.get(row.id) || null));
+    const payments = paymentRows.map(mapPayment);
+    const expenses = expenseRows.map(mapExpense);
     const slots = includeSlots
       ? buildSlots({
           from,
@@ -1423,6 +2256,8 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
       holidays,
       timeOff,
       appointments,
+      payments,
+      expenses,
       slots,
     };
   });
@@ -1442,13 +2277,33 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
   const externalRef = normalizeOptionalText(payload.externalRef);
   const idempotencyKey = normalizeOptionalText(payload.idempotencyKey);
   const createdByUserId = normalizeOptionalText(payload.createdByUserId);
+  const serviceAmount = clampMoney(payload.serviceAmount, 0);
+  const prepaidAmount = clampMoney(payload.prepaidAmount, 0);
+  const prepaidPaymentMethod = parsePaymentMethod(payload.prepaidPaymentMethod, "prepaidPaymentMethod");
+  const settlementAmount = clampMoney(payload.settlementAmount, 0);
+  const settlementPaymentMethod = parsePaymentMethod(payload.settlementPaymentMethod, "settlementPaymentMethod");
+  const requestedPaymentStatus = payload.paymentStatus ? parsePaymentStatus(payload.paymentStatus) : null;
   const durationMin = clampInt(payload.durationMin, 5, 720, Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000));
+  const paymentStatus = derivePaymentStatus(serviceAmount, prepaidAmount, settlementAmount, requestedPaymentStatus);
 
   if (clientIin && !isValidIin(clientIin)) {
     throw new BookingServiceError(400, "INVALID_IIN", "Invalid IIN");
   }
   if (endsAt <= startsAt) {
     throw new BookingServiceError(400, "VALIDATION_ERROR", "End date must be greater than start date");
+  }
+  if (prepaidAmount > 0 && !prepaidPaymentMethod) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "prepaidPaymentMethod is required when prepaidAmount is greater than 0");
+  }
+  if (settlementAmount > 0 && !settlementPaymentMethod) {
+    throw new BookingServiceError(
+      400,
+      "VALIDATION_ERROR",
+      "settlementPaymentMethod is required when settlementAmount is greater than 0",
+    );
+  }
+  if (serviceAmount > 0 && prepaidAmount + settlementAmount > serviceAmount) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Total received amount cannot exceed serviceAmount");
   }
 
   return withTransaction(async (client) => {
@@ -1464,7 +2319,8 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
         [companyId, idempotencyKey],
       );
       if (existingByIdempotency.length) {
-        return { appointment: mapAppointment(existingByIdempotency[0]) };
+        const existingFinance = await loadAppointmentFinanceTx(client, companyId, existingByIdempotency[0].id);
+        return { appointment: mapAppointment(existingByIdempotency[0], existingFinance) };
       }
     }
 
@@ -1536,7 +2392,31 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
       ],
     );
 
-    return { appointment: mapAppointment(rows[0]) };
+    const finance = await upsertAppointmentFinanceTx(client, {
+      companyId,
+      appointmentId: id,
+      serviceAmount,
+      prepaidAmount,
+      prepaidPaymentMethod,
+      settlementAmount,
+      settlementPaymentMethod,
+      paymentStatus,
+    });
+    await syncAppointmentPaymentJournalTx(client, {
+      companyId,
+      appointmentId: id,
+      prepaidAmount,
+      prepaidPaymentMethod,
+      settlementAmount,
+      settlementPaymentMethod,
+    });
+    await syncExpenseForAppointmentTx(client, {
+      companyId,
+      appointment: rows[0],
+      finance,
+    });
+
+    return { appointment: mapAppointment(rows[0], finance) };
   });
 }
 
@@ -1559,6 +2439,7 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
     if (!existing) {
       throw new BookingServiceError(404, "APPOINTMENT_NOT_FOUND", "Appointment not found");
     }
+    const existingFinance = await loadAppointmentFinanceTx(client, companyId, id);
 
     const employeeId = normalizeOptionalText(payload.employeeId) || existing.employee_id;
     const startsAt = payload.startsAt ? parseIsoDateTime(payload.startsAt, "startsAt") : new Date(existing.starts_at);
@@ -1584,6 +2465,32 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
       payload.idempotencyKey !== undefined ? normalizeOptionalText(payload.idempotencyKey) : existing.idempotency_key;
     const createdByUserId =
       payload.createdByUserId !== undefined ? normalizeOptionalText(payload.createdByUserId) : existing.created_by_user_id;
+    const serviceAmount =
+      payload.serviceAmount !== undefined ? clampMoney(payload.serviceAmount) : existingFinance?.service_amount ?? 0;
+    const prepaidAmount =
+      payload.prepaidAmount !== undefined ? clampMoney(payload.prepaidAmount) : existingFinance?.prepaid_amount ?? 0;
+    const prepaidPaymentMethod =
+      payload.prepaidPaymentMethod !== undefined
+        ? parsePaymentMethod(payload.prepaidPaymentMethod, "prepaidPaymentMethod")
+        : existingFinance?.prepaid_payment_method ?? null;
+    const settlementAmount =
+      payload.settlementAmount !== undefined ? clampMoney(payload.settlementAmount) : existingFinance?.settlement_amount ?? 0;
+    const settlementPaymentMethod =
+      payload.settlementPaymentMethod !== undefined
+        ? parsePaymentMethod(payload.settlementPaymentMethod, "settlementPaymentMethod")
+        : existingFinance?.settlement_payment_method ?? null;
+    const requestedPaymentStatus =
+      payload.paymentStatus !== undefined
+        ? parsePaymentStatus(payload.paymentStatus)
+        : ((existingFinance?.payment_status as BookingPaymentStatus | string | undefined) || null);
+    const paymentStatus = derivePaymentStatus(
+      serviceAmount,
+      prepaidAmount,
+      settlementAmount,
+      requestedPaymentStatus && BOOKING_PAYMENT_STATUSES.includes(requestedPaymentStatus as BookingPaymentStatus)
+        ? (requestedPaymentStatus as BookingPaymentStatus)
+        : null,
+    );
     const clientBirthDate =
       payload.clientBirthDate !== undefined
         ? payload.clientBirthDate
@@ -1598,6 +2505,19 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
     }
     if (clientIin && !isValidIin(clientIin)) {
       throw new BookingServiceError(400, "INVALID_IIN", "Invalid IIN");
+    }
+    if (prepaidAmount > 0 && !prepaidPaymentMethod) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "prepaidPaymentMethod is required when prepaidAmount is greater than 0");
+    }
+    if (settlementAmount > 0 && !settlementPaymentMethod) {
+      throw new BookingServiceError(
+        400,
+        "VALIDATION_ERROR",
+        "settlementPaymentMethod is required when settlementAmount is greater than 0",
+      );
+    }
+    if (serviceAmount > 0 && prepaidAmount + settlementAmount > serviceAmount) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Total received amount cannot exceed serviceAmount");
     }
 
     if (externalRef) {
@@ -1688,7 +2608,31 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
       ],
     );
 
-    return { appointment: mapAppointment(updatedRows[0]) };
+    const finance = await upsertAppointmentFinanceTx(client, {
+      companyId,
+      appointmentId: id,
+      serviceAmount,
+      prepaidAmount,
+      prepaidPaymentMethod,
+      settlementAmount,
+      settlementPaymentMethod,
+      paymentStatus,
+    });
+    await syncAppointmentPaymentJournalTx(client, {
+      companyId,
+      appointmentId: id,
+      prepaidAmount,
+      prepaidPaymentMethod,
+      settlementAmount,
+      settlementPaymentMethod,
+    });
+    await syncExpenseForAppointmentTx(client, {
+      companyId,
+      appointment: updatedRows[0],
+      finance,
+    });
+
+    return { appointment: mapAppointment(updatedRows[0], finance) };
   });
 }
 
@@ -1697,7 +2641,7 @@ export async function cancelBookingAppointment(companyIdRaw: string, appointment
   const companyId = normalizeCompanyId(companyIdRaw);
   const id = normalizeRequiredText(appointmentId, "appointmentId");
 
-  return withClient(async (client) => {
+  return withTransaction(async (client) => {
     const { rows } = await client.query<AppointmentRow>(
       `
         UPDATE calendar.appointments
@@ -1710,7 +2654,242 @@ export async function cancelBookingAppointment(companyIdRaw: string, appointment
     if (!rows.length) {
       throw new BookingServiceError(404, "APPOINTMENT_NOT_FOUND", "Appointment not found");
     }
-    return { appointment: mapAppointment(rows[0]) };
+    const existingFinance = await loadAppointmentFinanceTx(client, companyId, id);
+    const finance = await upsertAppointmentFinanceTx(client, {
+      companyId,
+      appointmentId: id,
+      serviceAmount: existingFinance?.service_amount ?? 0,
+      prepaidAmount: existingFinance?.prepaid_amount ?? 0,
+      prepaidPaymentMethod: existingFinance?.prepaid_payment_method ?? null,
+      settlementAmount: existingFinance?.settlement_amount ?? 0,
+      settlementPaymentMethod: existingFinance?.settlement_payment_method ?? null,
+      paymentStatus: "cancelled",
+    });
+    await syncExpenseForAppointmentTx(client, {
+      companyId,
+      appointment: rows[0],
+      finance,
+    });
+
+    return { appointment: mapAppointment(rows[0], finance) };
+  });
+}
+
+export async function addBookingAppointmentPayment(
+  companyIdRaw: string,
+  appointmentId: string,
+  payload: {
+    amount?: number;
+    paymentMethod: BookingPaymentMethod | string;
+  },
+) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(appointmentId, "appointmentId");
+  const paymentMethod = parsePaymentMethod(payload.paymentMethod) as BookingPaymentMethod;
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<AppointmentRow>(
+      `
+        SELECT *
+        FROM calendar.appointments
+        WHERE company_id = $1 AND id = $2
+        LIMIT 1
+      `,
+      [companyId, id],
+    );
+    const appointment = rows[0];
+    if (!appointment) {
+      throw new BookingServiceError(404, "APPOINTMENT_NOT_FOUND", "Appointment not found");
+    }
+
+    const existingFinance = await loadAppointmentFinanceTx(client, companyId, id);
+    const serviceAmount = existingFinance?.service_amount ?? 0;
+    const prepaidAmount = existingFinance?.prepaid_amount ?? 0;
+    const settlementAmount = existingFinance?.settlement_amount ?? 0;
+    if (serviceAmount <= 0) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Set serviceAmount before adding payment");
+    }
+    if (existingFinance?.payment_status === "cancelled") {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Cancelled payments cannot be updated");
+    }
+
+    const alreadyReceived = prepaidAmount + settlementAmount;
+    const remaining = Math.max(serviceAmount - alreadyReceived, 0);
+    const amount = payload.amount !== undefined ? clampMoney(payload.amount) : remaining;
+    if (amount <= 0) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Payment amount must be greater than 0");
+    }
+    if (alreadyReceived + amount > serviceAmount) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Payment amount exceeds remaining balance");
+    }
+
+    const finance = await upsertAppointmentFinanceTx(client, {
+      companyId,
+      appointmentId: id,
+      serviceAmount,
+      prepaidAmount,
+      prepaidPaymentMethod: existingFinance?.prepaid_payment_method ?? null,
+      settlementAmount: settlementAmount + amount,
+      settlementPaymentMethod: paymentMethod,
+      paymentStatus: derivePaymentStatus(
+        serviceAmount,
+        prepaidAmount,
+        settlementAmount + amount,
+        existingFinance?.payment_status === "cancelled" ? "cancelled" : null,
+      ),
+    });
+    await insertAppointmentPaymentTx(client, {
+      companyId,
+      appointmentId: id,
+      amount,
+      paymentMethod,
+      paymentKind: "payment",
+    });
+
+    await syncExpenseForAppointmentTx(client, {
+      companyId,
+      appointment,
+      finance,
+    });
+
+    return { appointment: mapAppointment(appointment, finance) };
+  });
+}
+
+export async function cancelBookingAppointmentPayment(companyIdRaw: string, appointmentId: string) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(appointmentId, "appointmentId");
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query<AppointmentRow>(
+      `
+        SELECT *
+        FROM calendar.appointments
+        WHERE company_id = $1 AND id = $2
+        LIMIT 1
+      `,
+      [companyId, id],
+    );
+    const appointment = rows[0];
+    if (!appointment) {
+      throw new BookingServiceError(404, "APPOINTMENT_NOT_FOUND", "Appointment not found");
+    }
+
+    const existingExpense = await loadAppointmentExpenseByAppointmentTx(client, companyId, id);
+    if (existingExpense?.status === "paid") {
+      throw new BookingServiceError(
+        400,
+        "VALIDATION_ERROR",
+        "Cannot cancel payment after the doctor's expense has been paid",
+      );
+    }
+
+    const existingFinance = await loadAppointmentFinanceTx(client, companyId, id);
+
+    await client.query(
+      `
+        DELETE FROM calendar.appointment_payments
+        WHERE company_id = $1
+          AND appointment_id = $2
+      `,
+      [companyId, id],
+    );
+
+    const finance = await upsertAppointmentFinanceTx(client, {
+      companyId,
+      appointmentId: id,
+      serviceAmount: existingFinance?.service_amount ?? 0,
+      prepaidAmount: 0,
+      prepaidPaymentMethod: null,
+      settlementAmount: 0,
+      settlementPaymentMethod: null,
+      paymentStatus: "cancelled",
+    });
+
+    await syncExpenseForAppointmentTx(client, {
+      companyId,
+      appointment,
+      finance,
+    });
+
+    return { appointment: mapAppointment(appointment, finance) };
+  });
+}
+
+export async function markBookingExpensePaid(companyIdRaw: string, expenseId: string) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(expenseId, "expenseId");
+
+  return withClient(async (client) => {
+    const { rows } = await client.query<AppointmentExpenseRow>(
+      `
+        UPDATE calendar.appointment_expenses
+        SET
+          status = 'paid',
+          paid_at = COALESCE(paid_at, NOW()),
+          updated_at = NOW()
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id],
+    );
+
+    if (!rows.length) {
+      throw new BookingServiceError(404, "EXPENSE_NOT_FOUND", "Expense not found");
+    }
+
+    return { expense: mapExpense(rows[0]) };
+  });
+}
+
+export async function payAllBookingExpenses(
+  companyIdRaw: string,
+  params: {
+    from?: string;
+    to?: string;
+    employeeIds?: string[];
+  } = {},
+) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const from = params.from ? parseIsoDateTime(params.from, "from") : null;
+  const to = params.to ? parseIsoDateTime(params.to, "to") : null;
+  if (from && to && to <= from) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Field 'to' must be greater than 'from'");
+  }
+  const employeeIds =
+    params.employeeIds
+      ?.map((item) => normalizeOptionalText(item))
+      .filter((item): item is string => Boolean(item)) || [];
+
+  return withClient(async (client) => {
+    const { rows } = await client.query<AppointmentExpenseRow>(
+      `
+        UPDATE calendar.appointment_expenses AS expense
+        SET
+          status = 'paid',
+          paid_at = COALESCE(expense.paid_at, NOW()),
+          updated_at = NOW()
+        FROM calendar.appointments AS appointment
+        WHERE expense.company_id = $1
+          AND expense.status = 'unpaid'
+          AND expense.appointment_id = appointment.id
+          AND appointment.company_id = $1
+          AND ($2::timestamptz IS NULL OR appointment.starts_at >= $2)
+          AND ($3::timestamptz IS NULL OR appointment.starts_at < $3)
+          AND (
+            coalesce(array_length($4::text[], 1), 0) = 0
+            OR appointment.employee_id = ANY($4::text[])
+          )
+        RETURNING expense.*
+      `,
+      [companyId, from ? from.toISOString() : null, to ? to.toISOString() : null, employeeIds],
+    );
+
+    return { expenses: rows.map(mapExpense) };
   });
 }
 
@@ -1758,7 +2937,13 @@ export async function createBookingHoliday(companyIdRaw: string, payload: Create
   const isRecurringYearly = parseBool(payload.isRecurringYearly, false);
   const isWorkingDayOverride = parseBool(payload.isWorkingDayOverride, false);
 
-  return withClient(async (client) => {
+  return withTransaction(async (client) => {
+    await assertHolidayUniquenessTx(client, {
+      companyId,
+      date,
+      isRecurringYearly,
+    });
+
     const { rows } = await client.query<HolidayRow>(
       `
         INSERT INTO calendar.holidays (
@@ -1769,6 +2954,72 @@ export async function createBookingHoliday(companyIdRaw: string, payload: Create
       `,
       [randomId(), companyId, date, title, isRecurringYearly, isWorkingDayOverride],
     );
+    return { holiday: mapHoliday(rows[0]) };
+  });
+}
+
+export async function updateBookingHoliday(companyIdRaw: string, holidayId: string, payload: UpdateHolidayInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(holidayId, "holidayId");
+
+  return withTransaction(async (client) => {
+    const existing = await loadHolidayTx(client, companyId, id);
+    const date =
+      payload.date !== undefined ? parseDateOnly(payload.date, "date") : normalizeDateOnly(existing.date);
+    const title = payload.title !== undefined ? normalizeRequiredText(payload.title, "title") : existing.title;
+    const isRecurringYearly =
+      payload.isRecurringYearly !== undefined
+        ? parseBool(payload.isRecurringYearly, existing.is_recurring_yearly)
+        : existing.is_recurring_yearly;
+    const isWorkingDayOverride =
+      payload.isWorkingDayOverride !== undefined
+        ? parseBool(payload.isWorkingDayOverride, existing.is_working_day_override)
+        : existing.is_working_day_override;
+
+    await assertHolidayUniquenessTx(client, {
+      companyId,
+      date,
+      isRecurringYearly,
+      ignoreHolidayId: id,
+    });
+
+    const { rows } = await client.query<HolidayRow>(
+      `
+        UPDATE calendar.holidays
+        SET
+          date = $3::date,
+          title = $4,
+          is_recurring_yearly = $5,
+          is_working_day_override = $6,
+          updated_at = NOW()
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id, date, title, isRecurringYearly, isWorkingDayOverride],
+    );
+
+    return { holiday: mapHoliday(rows[0]) };
+  });
+}
+
+export async function deleteBookingHoliday(companyIdRaw: string, holidayId: string) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(holidayId, "holidayId");
+
+  return withClient(async (client) => {
+    const { rows } = await client.query<HolidayRow>(
+      `
+        DELETE FROM calendar.holidays
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id],
+    );
+    if (!rows.length) {
+      throw new BookingServiceError(404, "HOLIDAY_NOT_FOUND", "Holiday not found");
+    }
     return { holiday: mapHoliday(rows[0]) };
   });
 }
@@ -1801,6 +3052,73 @@ export async function createBookingTimeOff(companyIdRaw: string, payload: Create
       `,
       [randomId(), companyId, employeeId, type, startsAt.toISOString(), endsAt.toISOString(), title, notes],
     );
+    return { item: mapTimeOff(rows[0]) };
+  });
+}
+
+export async function updateBookingTimeOff(companyIdRaw: string, timeOffId: string, payload: UpdateTimeOffInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(timeOffId, "timeOffId");
+
+  return withTransaction(async (client) => {
+    const existing = await loadTimeOffTx(client, companyId, id);
+    const employeeId =
+      payload.employeeId !== undefined ? normalizeOptionalText(payload.employeeId) : existing.employee_id;
+    if (employeeId) {
+      await loadEmployeeTx(client, companyId, employeeId);
+    }
+
+    const type = payload.type !== undefined ? normalizeRequiredText(payload.type, "type") : existing.type;
+    const startsAt =
+      payload.startsAt !== undefined ? parseIsoDateTime(payload.startsAt, "startsAt") : new Date(existing.starts_at);
+    const endsAt =
+      payload.endsAt !== undefined ? parseIsoDateTime(payload.endsAt, "endsAt") : new Date(existing.ends_at);
+    const title = payload.title !== undefined ? normalizeOptionalText(payload.title) : existing.title;
+    const notes = payload.notes !== undefined ? normalizeOptionalText(payload.notes) : existing.notes;
+
+    if (endsAt <= startsAt) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "End date must be greater than start date");
+    }
+
+    const { rows } = await client.query<TimeOffRow>(
+      `
+        UPDATE calendar.time_off
+        SET
+          employee_id = $3,
+          type = $4,
+          starts_at = $5,
+          ends_at = $6,
+          title = $7,
+          notes = $8,
+          updated_at = NOW()
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id, employeeId, type, startsAt.toISOString(), endsAt.toISOString(), title, notes],
+    );
+
+    return { item: mapTimeOff(rows[0]) };
+  });
+}
+
+export async function deleteBookingTimeOff(companyIdRaw: string, timeOffId: string) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(timeOffId, "timeOffId");
+
+  return withClient(async (client) => {
+    const { rows } = await client.query<TimeOffRow>(
+      `
+        DELETE FROM calendar.time_off
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id],
+    );
+    if (!rows.length) {
+      throw new BookingServiceError(404, "TIME_OFF_NOT_FOUND", "Time off not found");
+    }
     return { item: mapTimeOff(rows[0]) };
   });
 }

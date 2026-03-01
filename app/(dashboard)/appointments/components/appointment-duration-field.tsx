@@ -8,6 +8,7 @@ export function AppointmentDurationField({
   durationMin,
   presets,
   previewEndIso,
+  showPreviewSummary = true,
   minDurationMin,
   stepMin,
   onPresetSelect,
@@ -17,6 +18,7 @@ export function AppointmentDurationField({
   durationMin: number;
   presets: number[];
   previewEndIso: string | null;
+  showPreviewSummary?: boolean;
   minDurationMin: number;
   stepMin: number;
   onPresetSelect: (durationMin: number) => void;
@@ -52,7 +54,7 @@ export function AppointmentDurationField({
           disabled={disabled}
         />
       </div>
-      {previewEndIso ? (
+      {showPreviewSummary && previewEndIso ? (
         <div className="text-muted-foreground text-xs">
           Завершение: {new Date(previewEndIso).toLocaleString("ru-RU")}
           {" · "}

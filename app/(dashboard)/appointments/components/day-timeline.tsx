@@ -8,39 +8,56 @@ import { cn } from "@/lib/utils";
 
 const EMPLOYEE_NAME_MAX_LENGTH = 20;
 const EMPLOYEE_SPECIALTY_MAX_LENGTH = 15;
+const DAY_SUB_SLOT_COUNT = 6;
 
 function truncateText(value: string, maxLength: number) {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength).trimEnd()}...`;
 }
 
+function renderDaySubSlotDividers() {
+  return (
+    <>
+      {Array.from({ length: DAY_SUB_SLOT_COUNT - 1 }, (_, index) => (
+        <span
+          key={`day-sub-slot-divider-${index}`}
+          className="pointer-events-none absolute inset-x-0 h-px bg-border/70"
+          style={{ top: `${((index + 1) * 100) / DAY_SUB_SLOT_COUNT}%` }}
+        />
+      ))}
+    </>
+  );
+}
+
 export function DayTimeline({
   dayListForTimeline,
   visibleEmployees,
   timeRows,
-  blockedHolidaysByDateKey,
+  holidaysByDateKey,
   toDateKeyLocal,
   weekdayShortRu,
+  headerControls,
   dayTimeColumnWidth,
   dayEmployeeMinColumnWidth,
   dayTimeRowClass,
   daySlotHeightClass,
   formatMinuteLabel,
-  isCurrentTimelineSlot,
+  isAutoScrollTimeRow,
   renderTimelineCell,
 }: {
   dayListForTimeline: Date[];
   visibleEmployees: BookingEmployee[];
   timeRows: number[];
-  blockedHolidaysByDateKey: Map<string, BookingHoliday[]>;
+  holidaysByDateKey: Map<string, BookingHoliday[]>;
   toDateKeyLocal: (date: Date) => string;
   weekdayShortRu: string[];
+  headerControls?: ReactNode;
   dayTimeColumnWidth: number;
   dayEmployeeMinColumnWidth: number;
   dayTimeRowClass: string;
   daySlotHeightClass: string;
   formatMinuteLabel: (minuteOfDay: number) => string;
-  isCurrentTimelineSlot: (day: Date, minuteOfDay: number) => boolean;
+  isAutoScrollTimeRow: (minuteOfDay: number, durationMin?: number) => boolean;
   renderTimelineCell: (
     day: Date,
     minuteOfDay: number,
@@ -51,22 +68,32 @@ export function DayTimeline({
   return (
     <div className="space-y-4 overflow-x-auto px-4 pb-4">
       {dayListForTimeline.map((day) => {
-        const holidays = blockedHolidaysByDateKey.get(toDateKeyLocal(day)) || [];
+        const holidays = holidaysByDateKey.get(toDateKeyLocal(day)) || [];
         return (
           <div key={day.toISOString()} className="overflow-hidden rounded-xl border">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-background px-3 py-1.5">
               <div>
                 <div className="text-sm font-semibold">
                   {weekdayShortRu[day.getDay()]}, {day.toLocaleDateString("ru-RU", { day: "numeric", month: "long" })}
                 </div>
-                <div className="text-muted-foreground text-xs">
+                <div className="text-muted-foreground text-[11px] leading-none">
                   {visibleEmployees.length} {visibleEmployees.length === 1 ? "сотрудник" : "сотрудников"}
                 </div>
               </div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {headerControls}
                 {holidays.map((holiday) => (
-                  <Badge key={holiday.id} variant="destructive">
+                  <Badge
+                    key={holiday.id}
+                    variant={holiday.isWorkingDayOverride ? "outline" : "destructive"}
+                    className={
+                      holiday.isWorkingDayOverride
+                        ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+                        : undefined
+                    }
+                  >
                     {holiday.title}
+                    {holiday.isWorkingDayOverride ? " (с записью)" : ""}
                   </Badge>
                 ))}
               </div>
@@ -113,27 +140,32 @@ export function DayTimeline({
                 </div>
               )}
 
-              {timeRows.map((minuteOfDay) => (
-                <Fragment key={`${day.toISOString()}-${minuteOfDay}-row`}>
-                  <div
-                    key={`${day.toISOString()}-${minuteOfDay}-time`}
-                    className={cn(
-                      dayTimeRowClass,
-                      isCurrentTimelineSlot(day, minuteOfDay) && "bg-muted text-primary font-semibold",
-                    )}
-                  >
-                    {formatMinuteLabel(minuteOfDay)}
-                  </div>
-                  {visibleEmployees.length ? (
-                    visibleEmployees.map((employee) => renderTimelineCell(day, minuteOfDay, employee))
-                  ) : (
+              {timeRows.map((minuteOfDay) => {
+                const isCurrentRow = isAutoScrollTimeRow(minuteOfDay);
+                return (
+                  <Fragment key={`${day.toISOString()}-${minuteOfDay}-row`}>
                     <div
-                      key={`${day.toISOString()}-${minuteOfDay}-empty`}
-                      className={cn(daySlotHeightClass, "border-l border-t bg-background/50")}
-                    />
-                  )}
-                </Fragment>
-              ))}
+                      className={cn(
+                        dayTimeRowClass,
+                        isCurrentRow && "bg-muted text-primary font-semibold",
+                      )}
+                      data-current-time-anchor={isCurrentRow ? "true" : undefined}
+                    >
+                      {formatMinuteLabel(minuteOfDay)}
+                    </div>
+                    {visibleEmployees.length ? (
+                      visibleEmployees.map((employee) => renderTimelineCell(day, minuteOfDay, employee))
+                    ) : (
+                      <div
+                        key={`${day.toISOString()}-${minuteOfDay}-empty`}
+                        className={cn("relative", daySlotHeightClass, "border-l border-t bg-background/50")}
+                      >
+                        {renderDaySubSlotDividers()}
+                      </div>
+                    )}
+                  </Fragment>
+                );
+              })}
             </div>
           </div>
         );

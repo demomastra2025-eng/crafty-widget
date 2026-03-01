@@ -161,8 +161,6 @@ export function useAppointmentsCalendarIndexes(params: {
       const slotMinute = minuteOfDay(date);
       const bucketMinute = Math.floor(slotMinute / params.slotStepMin) * params.slotStepMin;
       const dayKey = dayMinuteKey(toDateKeyLocal(date), bucketMinute);
-      const existing = availableCandidatesByDayMinuteKey.get(dayKey);
-      if (existing?.some((item) => item.employeeId === slot.employeeId)) continue;
       pushMapArray(availableCandidatesByDayMinuteKey, dayKey, {
         employeeId: slot.employeeId,
         startsAt: slot.startsAt,

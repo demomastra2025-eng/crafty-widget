@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  addBookingAppointmentPayment,
+  cancelBookingAppointmentPayment,
   BookingServiceError,
   cancelBookingAppointment,
   createBookingAppointment,
   createBookingEmployee,
   createBookingHoliday,
   createBookingTimeOff,
+  deleteBookingHoliday,
+  deleteBookingTimeOff,
   fetchBookingCalendarView,
   listBookingEmployees,
   listBookingHolidays,
+  markBookingExpensePaid,
+  payAllBookingExpenses,
   replaceBookingEmployeeBreakRules,
   replaceBookingEmployeeWorkRules,
+  updateBookingHoliday,
+  updateBookingTimeOff,
   updateBookingEmployee,
   updateBookingAppointment,
 } from "@/lib/server/booking-service";
@@ -19,7 +27,6 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_COMPANY_ID = "default";
 const COMPANY_HEADER_KEYS = [
   "x-booking-company-id",
   "x-chatwoot-account-id",
@@ -37,7 +44,11 @@ type UpdateAppointmentPayload = Parameters<typeof updateBookingAppointment>[2];
 type WorkRulesPayload = Parameters<typeof replaceBookingEmployeeWorkRules>[2];
 type BreakRulesPayload = Parameters<typeof replaceBookingEmployeeBreakRules>[2];
 type CreateHolidayPayload = Parameters<typeof createBookingHoliday>[1];
+type UpdateHolidayPayload = Parameters<typeof updateBookingHoliday>[2];
 type CreateTimeOffPayload = Parameters<typeof createBookingTimeOff>[1];
+type UpdateTimeOffPayload = Parameters<typeof updateBookingTimeOff>[2];
+type AddAppointmentPaymentPayload = Parameters<typeof addBookingAppointmentPayment>[2];
+type PayAllExpensesPayload = Parameters<typeof payAllBookingExpenses>[1];
 
 function firstNonEmpty(values: Array<string | null | undefined>): string | null {
   for (const value of values) {
@@ -47,14 +58,14 @@ function firstNonEmpty(values: Array<string | null | undefined>): string | null 
   return null;
 }
 
-function resolveCompanyId(request: NextRequest): string {
+function resolveCompanyId(request: NextRequest): string | null {
   const headerValue = firstNonEmpty(COMPANY_HEADER_KEYS.map((key) => request.headers.get(key)));
   const queryValue = firstNonEmpty([
     request.nextUrl.searchParams.get("companyId"),
     request.nextUrl.searchParams.get("accountId"),
     request.nextUrl.searchParams.get("tenantId"),
   ]);
-  return headerValue || queryValue || DEFAULT_COMPANY_ID;
+  return headerValue || queryValue;
 }
 
 function resolveAgentId(request: NextRequest): string | null {
@@ -157,6 +168,10 @@ function notFound() {
   return errorResponse(404, "NOT_FOUND", "Booking endpoint not found");
 }
 
+function companyIdRequired() {
+  return errorResponse(400, "COMPANY_ID_REQUIRED", "Chatwoot accountId or companyId is required");
+}
+
 async function dispatchGet(request: NextRequest, slug: string[], companyId: string) {
   if (slug.length === 1 && slug[0] === "employees") {
     const includeInactive = parseBoolean(request.nextUrl.searchParams.get("includeInactive")) || false;
@@ -216,6 +231,16 @@ async function dispatchPost(request: NextRequest, slug: string[], companyId: str
     return NextResponse.json(result);
   }
 
+  if (slug.length === 3 && slug[0] === "appointments" && slug[2] === "payment") {
+    const result = await addBookingAppointmentPayment(companyId, slug[1], body as AddAppointmentPaymentPayload);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 4 && slug[0] === "appointments" && slug[2] === "payment" && slug[3] === "cancel") {
+    const result = await cancelBookingAppointmentPayment(companyId, slug[1]);
+    return NextResponse.json(result);
+  }
+
   if (slug.length === 1 && slug[0] === "holidays") {
     const result = await createBookingHoliday(companyId, body as CreateHolidayPayload);
     return NextResponse.json(result, { status: 201 });
@@ -224,6 +249,16 @@ async function dispatchPost(request: NextRequest, slug: string[], companyId: str
   if (slug.length === 1 && slug[0] === "time-off") {
     const result = await createBookingTimeOff(companyId, body as CreateTimeOffPayload);
     return NextResponse.json(result, { status: 201 });
+  }
+
+  if (slug.length === 2 && slug[0] === "expenses" && slug[1] === "pay-all") {
+    const result = await payAllBookingExpenses(companyId, body as PayAllExpensesPayload);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 3 && slug[0] === "expenses" && slug[2] === "pay") {
+    const result = await markBookingExpensePaid(companyId, slug[1]);
+    return NextResponse.json(result);
   }
 
   return notFound();
@@ -254,6 +289,18 @@ async function dispatchPatch(request: NextRequest, slug: string[], companyId: st
     return NextResponse.json(result);
   }
 
+  if (slug.length === 2 && slug[0] === "holidays") {
+    const body = await readJsonBody(request);
+    const result = await updateBookingHoliday(companyId, slug[1], body as UpdateHolidayPayload);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 2 && slug[0] === "time-off") {
+    const body = await readJsonBody(request);
+    const result = await updateBookingTimeOff(companyId, slug[1], body as UpdateTimeOffPayload);
+    return NextResponse.json(result);
+  }
+
   if (!(slug.length === 2 && slug[0] === "appointments")) {
     return notFound();
   }
@@ -269,9 +316,24 @@ async function dispatchPatch(request: NextRequest, slug: string[], companyId: st
   return NextResponse.json(result);
 }
 
+async function dispatchDelete(_request: NextRequest, slug: string[], companyId: string) {
+  if (slug.length === 2 && slug[0] === "holidays") {
+    const result = await deleteBookingHoliday(companyId, slug[1]);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 2 && slug[0] === "time-off") {
+    const result = await deleteBookingTimeOff(companyId, slug[1]);
+    return NextResponse.json(result);
+  }
+
+  return notFound();
+}
+
 export async function GET(request: NextRequest, context: RouteContext) {
   const slug = await resolveSlug(context);
   const companyId = resolveCompanyId(request);
+  if (!companyId) return companyIdRequired();
   try {
     return await dispatchGet(request, slug, companyId);
   } catch (error) {
@@ -282,6 +344,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 export async function POST(request: NextRequest, context: RouteContext) {
   const slug = await resolveSlug(context);
   const companyId = resolveCompanyId(request);
+  if (!companyId) return companyIdRequired();
   const agentId = resolveAgentId(request);
   try {
     return await dispatchPost(request, slug, companyId, agentId);
@@ -293,6 +356,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 export async function PUT(request: NextRequest, context: RouteContext) {
   const slug = await resolveSlug(context);
   const companyId = resolveCompanyId(request);
+  if (!companyId) return companyIdRequired();
   try {
     return await dispatchPut(request, slug, companyId);
   } catch (error) {
@@ -303,9 +367,21 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const slug = await resolveSlug(context);
   const companyId = resolveCompanyId(request);
+  if (!companyId) return companyIdRequired();
   const agentId = resolveAgentId(request);
   try {
     return await dispatchPatch(request, slug, companyId, agentId);
+  } catch (error) {
+    return mapError(error);
+  }
+}
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  const slug = await resolveSlug(context);
+  const companyId = resolveCompanyId(request);
+  if (!companyId) return companyIdRequired();
+  try {
+    return await dispatchDelete(request, slug, companyId);
   } catch (error) {
     return mapError(error);
   }

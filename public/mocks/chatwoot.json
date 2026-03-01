@@ -1,0 +1,27 @@
+{
+  "event": "chatwoot-external-app:context",
+  "account": {
+    "id": "demo-company",
+    "name": "Demo Clinic"
+  },
+  "currentAgent": {
+    "id": "demo-agent",
+    "name": "Demo Agent",
+    "email": "demo@example.com"
+  },
+  "contact": {
+    "id": "demo-contact",
+    "name": "Тестовый пациент",
+    "email": "patient@example.com",
+    "phoneNumber": "+77000000000"
+  },
+  "conversation": {
+    "id": "demo-conversation",
+    "inboxId": "demo-inbox"
+  },
+  "theme": {
+    "selected": "light",
+    "resolved": "light",
+    "isDark": false
+  }
+}

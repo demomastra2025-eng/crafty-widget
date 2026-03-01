@@ -1,4 +1,9 @@
 export type BookingView = 'day' | 'week' | 'month';
+export type BookingPaymentMethod = 'kaspi_transfer' | 'kaspi_qr' | 'cash' | 'bank_transfer';
+export type BookingPaymentStatus = 'awaiting_payment' | 'prepaid' | 'paid' | 'cancelled';
+export type BookingExpenseStatus = 'unpaid' | 'paid';
+export type BookingCompensationType = 'percent' | 'fixed';
+export type BookingPaymentKind = 'prepaid' | 'payment' | 'adjustment';
 
 export type BookingEmployee = {
   id: string;
@@ -8,6 +13,8 @@ export type BookingEmployee = {
   color?: string | null;
   timezone: string;
   slotDurationMin: number;
+  compensationType: BookingCompensationType | string;
+  compensationValue: number;
   isActive: boolean;
   createdAt?: string | null;
   updatedAt?: string | null;
@@ -71,6 +78,35 @@ export type BookingAppointment = {
   externalRef?: string | null;
   idempotencyKey?: string | null;
   createdByUserId?: string | null;
+  serviceAmount: number;
+  prepaidAmount: number;
+  prepaidPaymentMethod?: BookingPaymentMethod | string | null;
+  settlementAmount: number;
+  settlementPaymentMethod?: BookingPaymentMethod | string | null;
+  paymentStatus: BookingPaymentStatus | string;
+};
+
+export type BookingExpense = {
+  id: string;
+  companyId: string;
+  appointmentId: string;
+  employeeId: string;
+  amount: number;
+  status: BookingExpenseStatus | string;
+  paidAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type BookingPayment = {
+  id: string;
+  companyId: string;
+  appointmentId: string;
+  amount: number;
+  paymentMethod: BookingPaymentMethod | string;
+  paymentKind: BookingPaymentKind | string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type BookingSlot = {
@@ -89,6 +125,8 @@ export type BookingCalendarViewResponse = {
   holidays: BookingHoliday[];
   timeOff: BookingTimeOff[];
   appointments: BookingAppointment[];
+  payments: BookingPayment[];
+  expenses: BookingExpense[];
   slots: BookingSlot[];
 };
 
@@ -106,6 +144,11 @@ export type BookingApiError = Error & {
   details?: Record<string, unknown>;
 };
 
+export type BookingRequestContext = {
+  companyId?: string | null;
+  agentId?: string | null;
+};
+
 const BOOKING_COMPANY_STORAGE_KEY = "crafty:booking-company-id";
 const BOOKING_AGENT_STORAGE_KEY = "crafty:booking-agent-id";
 const EVO_API_KEY_STORAGE = "crafty:evo-api-key";
@@ -119,7 +162,7 @@ function getApiKey() {
   }
 }
 
-const authHeaders = (): HeadersInit => {
+const authHeaders = (requestContext?: BookingRequestContext): HeadersInit => {
   if (typeof window === "undefined") return {};
 
   const headers: Record<string, string> = {};
@@ -127,12 +170,19 @@ const authHeaders = (): HeadersInit => {
   if (key) headers.apikey = key;
 
   try {
-    const companyId = localStorage.getItem(BOOKING_COMPANY_STORAGE_KEY);
+    const companyId =
+      (requestContext?.companyId ? String(requestContext.companyId) : "") ||
+      localStorage.getItem(BOOKING_COMPANY_STORAGE_KEY);
     if (companyId) headers["x-booking-company-id"] = companyId;
-    const agentId = localStorage.getItem(BOOKING_AGENT_STORAGE_KEY);
+    const agentId =
+      (requestContext?.agentId ? String(requestContext.agentId) : "") ||
+      localStorage.getItem(BOOKING_AGENT_STORAGE_KEY);
     if (agentId) headers["x-booking-agent-id"] = agentId;
   } catch {
-    // ignore localStorage errors
+    const companyId = requestContext?.companyId ? String(requestContext.companyId) : "";
+    if (companyId) headers["x-booking-company-id"] = companyId;
+    const agentId = requestContext?.agentId ? String(requestContext.agentId) : "";
+    if (agentId) headers["x-booking-agent-id"] = agentId;
   }
 
   return headers;
@@ -148,13 +198,17 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
   return qs ? `?${qs}` : '';
 }
 
-async function requestJson<T>(path: string, options: RequestInit = {}) {
+async function requestJson<T>(
+  path: string,
+  options: RequestInit = {},
+  requestContext?: BookingRequestContext,
+) {
   const res = await fetch(path, {
     ...options,
     cache: 'no-store',
     headers: {
       ...(options.method && options.method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
-      ...(authHeaders() || {}),
+      ...(authHeaders(requestContext) || {}),
       ...(options.headers || {}),
     },
   });
@@ -190,9 +244,14 @@ async function requestJson<T>(path: string, options: RequestInit = {}) {
   return (await res.json()) as T;
 }
 
-export async function listBookingEmployees(includeInactive = false) {
+export async function listBookingEmployees(
+  includeInactive = false,
+  requestContext?: BookingRequestContext,
+) {
   return requestJson<{ employees: BookingEmployee[] }>(
     `/api/evo/booking/employees${buildQuery({ includeInactive: includeInactive ? 'true' : undefined })}`,
+    {},
+    requestContext,
   );
 }
 
@@ -201,11 +260,13 @@ export async function createBookingEmployee(payload: {
   specialty?: string;
   color?: string;
   slotDurationMin?: number;
-}) {
+  compensationType?: BookingCompensationType | string;
+  compensationValue?: number;
+}, requestContext?: BookingRequestContext) {
   return requestJson<{ employee: BookingEmployee }>(`/api/evo/booking/employees`, {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, requestContext);
 }
 
 export async function updateBookingEmployee(
@@ -215,27 +276,38 @@ export async function updateBookingEmployee(
     specialty?: string | null;
     color?: string | null;
     slotDurationMin?: number;
+    compensationType?: BookingCompensationType | string;
+    compensationValue?: number;
     isActive?: boolean;
   },
+  requestContext?: BookingRequestContext,
 ) {
   return requestJson<{ employee: BookingEmployee }>(`/api/evo/booking/employees/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
-  });
+  }, requestContext);
 }
 
-export async function replaceBookingEmployeeWorkRules(employeeId: string, workRules: BookingRuleRangeInput[]) {
+export async function replaceBookingEmployeeWorkRules(
+  employeeId: string,
+  workRules: BookingRuleRangeInput[],
+  requestContext?: BookingRequestContext,
+) {
   return requestJson<{ workRules: BookingWorkRule[] }>(`/api/evo/booking/employees/${employeeId}/work-rules`, {
     method: 'PUT',
     body: JSON.stringify({ workRules }),
-  });
+  }, requestContext);
 }
 
-export async function replaceBookingEmployeeBreakRules(employeeId: string, breakRules: BookingRuleRangeInput[]) {
+export async function replaceBookingEmployeeBreakRules(
+  employeeId: string,
+  breakRules: BookingRuleRangeInput[],
+  requestContext?: BookingRequestContext,
+) {
   return requestJson<{ breakRules: BookingBreakRule[] }>(`/api/evo/booking/employees/${employeeId}/break-rules`, {
     method: 'PUT',
     body: JSON.stringify({ breakRules }),
-  });
+  }, requestContext);
 }
 
 export async function fetchBookingCalendarView(params: {
@@ -245,7 +317,7 @@ export async function fetchBookingCalendarView(params: {
   employeeIds?: string[];
   includeSlots?: boolean;
   durationMin?: number;
-}) {
+}, requestContext?: BookingRequestContext) {
   return requestJson<BookingCalendarViewResponse>(
     `/api/evo/booking/calendar/view${buildQuery({
       view: params.view,
@@ -255,6 +327,8 @@ export async function fetchBookingCalendarView(params: {
       includeSlots: params.includeSlots ?? undefined,
       durationMin: params.durationMin,
     })}`,
+    {},
+    requestContext,
   );
 }
 
@@ -270,30 +344,87 @@ export async function createBookingAppointment(payload: {
   source?: string;
   externalRef?: string;
   idempotencyKey?: string;
-}) {
+  serviceAmount?: number;
+  prepaidAmount?: number;
+  prepaidPaymentMethod?: BookingPaymentMethod | string;
+  settlementAmount?: number;
+  settlementPaymentMethod?: BookingPaymentMethod | string;
+  paymentStatus?: BookingPaymentStatus | string;
+}, requestContext?: BookingRequestContext) {
   return requestJson<{ appointment: BookingAppointment }>(`/api/evo/booking/appointments`, {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, requestContext);
 }
 
-export async function updateBookingAppointment(id: string, payload: Partial<BookingAppointment>) {
+export async function updateBookingAppointment(
+  id: string,
+  payload: Partial<BookingAppointment>,
+  requestContext?: BookingRequestContext,
+) {
   return requestJson<{ appointment: BookingAppointment }>(`/api/evo/booking/appointments/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
-  });
+  }, requestContext);
 }
 
-export async function cancelBookingAppointment(id: string) {
+export async function cancelBookingAppointment(id: string, requestContext?: BookingRequestContext) {
   return requestJson<{ appointment: BookingAppointment }>(`/api/evo/booking/appointments/${id}/cancel`, {
     method: 'POST',
     body: JSON.stringify({}),
-  });
+  }, requestContext);
 }
 
-export async function listBookingHolidays(params: { year?: number; from?: string; to?: string }) {
+export async function addBookingAppointmentPayment(
+  id: string,
+  payload: {
+    amount?: number;
+    paymentMethod: BookingPaymentMethod | string;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ appointment: BookingAppointment }>(`/api/evo/booking/appointments/${id}/payment`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function cancelBookingAppointmentPayment(id: string, requestContext?: BookingRequestContext) {
+  return requestJson<{ appointment: BookingAppointment }>(`/api/evo/booking/appointments/${id}/payment/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }, requestContext);
+}
+
+export async function markBookingExpensePaid(id: string, requestContext?: BookingRequestContext) {
+  return requestJson<{ expense: BookingExpense }>(`/api/evo/booking/expenses/${id}/pay`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }, requestContext);
+}
+
+export async function payAllBookingExpenses(
+  payload: {
+    from?: string;
+    to?: string;
+    employeeIds?: string[];
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ expenses: BookingExpense[] }>(`/api/evo/booking/expenses/pay-all`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function listBookingHolidays(
+  params: { year?: number; from?: string; to?: string },
+  requestContext?: BookingRequestContext,
+) {
   return requestJson<{ holidays: BookingHoliday[] }>(
     `/api/evo/booking/holidays${buildQuery({ year: params.year, from: params.from, to: params.to })}`,
+    {},
+    requestContext,
   );
 }
 
@@ -302,11 +433,33 @@ export async function createBookingHoliday(payload: {
   title: string;
   isRecurringYearly?: boolean;
   isWorkingDayOverride?: boolean;
-}) {
+}, requestContext?: BookingRequestContext) {
   return requestJson<{ holiday: BookingHoliday }>(`/api/evo/booking/holidays`, {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, requestContext);
+}
+
+export async function updateBookingHoliday(
+  id: string,
+  payload: {
+    date?: string;
+    title?: string;
+    isRecurringYearly?: boolean;
+    isWorkingDayOverride?: boolean;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ holiday: BookingHoliday }>(`/api/evo/booking/holidays/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function deleteBookingHoliday(id: string, requestContext?: BookingRequestContext) {
+  return requestJson<{ holiday: BookingHoliday }>(`/api/evo/booking/holidays/${id}`, {
+    method: 'DELETE',
+  }, requestContext);
 }
 
 export async function createBookingTimeOff(payload: {
@@ -316,9 +469,33 @@ export async function createBookingTimeOff(payload: {
   endsAt: string;
   title?: string;
   notes?: string;
-}) {
+}, requestContext?: BookingRequestContext) {
   return requestJson<{ item: BookingTimeOff }>(`/api/evo/booking/time-off`, {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, requestContext);
+}
+
+export async function updateBookingTimeOff(
+  id: string,
+  payload: {
+    employeeId?: string | null;
+    type?: string;
+    startsAt?: string;
+    endsAt?: string;
+    title?: string | null;
+    notes?: string | null;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ item: BookingTimeOff }>(`/api/evo/booking/time-off/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function deleteBookingTimeOff(id: string, requestContext?: BookingRequestContext) {
+  return requestJson<{ item: BookingTimeOff }>(`/api/evo/booking/time-off/${id}`, {
+    method: 'DELETE',
+  }, requestContext);
 }

@@ -8,6 +8,7 @@ const DEV_MOCK_PATH = "/mocks/chatwoot.json";
 const CONTEXT_FALLBACK_TIMEOUT_MS = 2500;
 
 type UnknownRecord = Record<string, unknown>;
+export type ChatwootFeatureFlags = Record<string, boolean>;
 
 export type ChatwootContact = {
   id?: number | string;
@@ -38,6 +39,13 @@ export type ChatwootCurrentAgent = {
 export type ChatwootAccount = {
   id?: number | string;
   name?: string;
+  features?: ChatwootFeatureFlags;
+};
+
+export type ChatwootTheme = {
+  selected?: string;
+  resolved?: string;
+  isDark?: boolean;
 };
 
 export type ChatwootPayload = {
@@ -46,7 +54,21 @@ export type ChatwootPayload = {
   contact?: ChatwootContact;
   conversation?: ChatwootConversation;
   currentAgent?: ChatwootCurrentAgent;
+  theme?: ChatwootTheme;
 };
+
+function mergeChatwootPayload(previous: ChatwootPayload | null, next: ChatwootPayload): ChatwootPayload {
+  if (!previous) return next;
+
+  return {
+    event: next.event ?? previous.event,
+    account: next.account ?? previous.account,
+    contact: next.contact ?? previous.contact,
+    conversation: next.conversation ?? previous.conversation,
+    currentAgent: next.currentAgent ?? previous.currentAgent,
+    theme: next.theme ?? previous.theme,
+  };
+}
 
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -67,6 +89,30 @@ function readNumber(record: UnknownRecord | null, keys: string[]): number | unde
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function readBoolean(record: UnknownRecord | null, keys: string[]): boolean | undefined {
+  if (!record) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+    }
+  }
+  return undefined;
+}
+
+function normalizeBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
   }
   return undefined;
 }
@@ -124,6 +170,19 @@ function normalizeCurrentAgent(input: unknown): ChatwootCurrentAgent | undefined
   };
 }
 
+function normalizeFeatureFlags(input: unknown): ChatwootFeatureFlags | undefined {
+  const record = asRecord(input);
+  if (!record) return undefined;
+
+  const features = Object.entries(record).reduce<ChatwootFeatureFlags>((result, [key, value]) => {
+    const normalized = normalizeBoolean(value);
+    if (normalized !== undefined) result[key] = normalized;
+    return result;
+  }, {});
+
+  return Object.keys(features).length > 0 ? features : undefined;
+}
+
 function normalizeAccount(input: unknown): ChatwootAccount | undefined {
   const record = asRecord(input);
   if (!record) return undefined;
@@ -131,6 +190,24 @@ function normalizeAccount(input: unknown): ChatwootAccount | undefined {
   return {
     id: (record.id as number | string | undefined) ?? undefined,
     name: readString(record, ["name"]),
+    features: normalizeFeatureFlags(record.features),
+  };
+}
+
+function normalizeTheme(input: unknown): ChatwootTheme | undefined {
+  const record = asRecord(input);
+  if (!record) return undefined;
+
+  const selected = readString(record, ["selected"]);
+  const resolved = readString(record, ["resolved"]);
+  const isDark = readBoolean(record, ["isDark", "is_dark"]);
+
+  if (!selected && !resolved && isDark === undefined) return undefined;
+
+  return {
+    selected,
+    resolved,
+    isDark,
   };
 }
 
@@ -153,8 +230,9 @@ function parseChatwootPayload(raw: unknown): ChatwootPayload | null {
   const metaSender = normalizeContact(readRecord(conversation?.meta || null, ["sender"]));
   const contact = normalizeContact(data.contact) || metaSender;
   const currentAgent = normalizeCurrentAgent(data.currentAgent);
+  const theme = normalizeTheme(data.theme) || normalizeTheme(root.theme);
 
-  if (!account && !contact && !conversation && !currentAgent) return null;
+  if (!account && !contact && !conversation && !currentAgent && !theme) return null;
 
   return {
     event: readString(root, ["event"]),
@@ -162,6 +240,7 @@ function parseChatwootPayload(raw: unknown): ChatwootPayload | null {
     contact,
     conversation,
     currentAgent,
+    theme,
   };
 }
 
@@ -176,7 +255,7 @@ export function useChatwoot(): [boolean, ChatwootPayload | null, Error | null] {
     const applyPayload = (next: ChatwootPayload) => {
       if (!isActive) return;
       hasContext = true;
-      setPayload(next);
+      setPayload((previous) => mergeChatwootPayload(previous, next));
       setLoaded(true);
     };
 

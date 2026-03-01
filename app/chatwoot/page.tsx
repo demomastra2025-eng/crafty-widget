@@ -53,32 +53,67 @@ export default function ChatwootDashboardPage() {
   const conversationId = payload?.conversation?.id;
   const accountId = payload?.account?.id;
   const currentAgentId = payload?.currentAgent?.id;
+  const hasCalendarKassaAccess =
+    payload?.account?.features?.calendar_kassa_access !== false;
+  const theme = payload?.theme;
+  const hasAccountContext = String(accountId ?? "").trim().length > 0;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      if (accountId !== undefined && accountId !== null) {
+      if (hasAccountContext) {
         localStorage.setItem(BOOKING_COMPANY_STORAGE_KEY, String(accountId));
+      } else {
+        localStorage.removeItem(BOOKING_COMPANY_STORAGE_KEY);
       }
       if (currentAgentId !== undefined && currentAgentId !== null) {
         localStorage.setItem(BOOKING_AGENT_STORAGE_KEY, String(currentAgentId));
+      } else {
+        localStorage.removeItem(BOOKING_AGENT_STORAGE_KEY);
       }
     } catch {
       // ignore localStorage errors
     }
-  }, [accountId, currentAgentId]);
+  }, [accountId, currentAgentId, hasAccountContext]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const html = document.documentElement;
+    const resolvedTheme = String(theme?.resolved || theme?.selected || "").trim().toLowerCase();
+    const isDark =
+      typeof theme?.isDark === "boolean"
+        ? theme.isDark
+        : resolvedTheme === "dark";
+
+    html.classList.toggle("dark", isDark);
+    html.style.colorScheme = isDark ? "dark" : "light";
+
+    if (theme?.selected) html.dataset.themeSelected = String(theme.selected);
+    else delete html.dataset.themeSelected;
+
+    if (theme?.resolved) html.dataset.themeResolved = String(theme.resolved);
+    else delete html.dataset.themeResolved;
+  }, [theme?.isDark, theme?.resolved, theme?.selected]);
 
   const appointmentPrefill = useMemo<AppointmentPrefill>(
     () => ({
       clientName: contact?.name || "",
       clientPhone: resolveContactPhone(contact) || "",
       clientIin: resolveContactIin(contact) || "",
-      clientComment: conversationId ? `Chatwoot conversation #${conversationId}` : "",
+      clientComment: "",
       source: "chatwoot",
       externalRef: conversationId ? `chatwoot:conversation:${conversationId}` : undefined,
     }),
     [contact, conversationId],
   );
+  const bookingRequestContext = {
+    companyId: hasAccountContext ? String(accountId) : undefined,
+    agentId:
+      currentAgentId !== undefined && currentAgentId !== null
+        ? String(currentAgentId)
+        : undefined,
+  };
 
   if (error) {
     return (
@@ -89,6 +124,34 @@ export default function ChatwootDashboardPage() {
   }
   if (!loaded) {
     return <div className="p-4 text-muted-foreground w-full h-screen flex items-center justify-center">Загрузка данных виджета...</div>;
+  }
+  if (!hasAccountContext) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center p-6">
+        <Card className="w-full max-w-lg">
+          <CardContent className="space-y-2 p-6">
+            <div className="text-base font-semibold">Календарь недоступен</div>
+            <div className="text-muted-foreground text-sm">
+              Chatwoot не передал `accountId`, поэтому виджет не может определить tenant календаря.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+  if (!hasCalendarKassaAccess) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center p-6">
+        <Card className="w-full max-w-lg">
+          <CardContent className="space-y-2 p-6">
+            <div className="text-base font-semibold">Календарь недоступен</div>
+            <div className="text-muted-foreground text-sm">
+              Администратор аккаунта не выдал доступ к календарю и кассе для этого аккаунта.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
   return (
     <main className="w-full min-h-screen flex flex-col bg-muted/10">
@@ -118,7 +181,10 @@ export default function ChatwootDashboardPage() {
         </section>
       )}
       <section className="flex-1 overflow-auto">
-        <AppointmentsPageClient prefill={appointmentPrefill} />
+        <AppointmentsPageClient
+          prefill={appointmentPrefill}
+          requestContext={bookingRequestContext}
+        />
       </section>
     </main>
   );
