@@ -45,7 +45,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TimePicker24h } from "@/components/ui/time-picker-24h";
@@ -3846,7 +3845,7 @@ export default function AppointmentsPageClient({
                   </Button>
                 </div>
               </div>
-              <ScrollArea className="h-56 rounded-md">
+              <div className="rounded-md">
                 <div className="space-y-1 p-2">
                   {employees.length === 0 ? (
                     <div className="text-muted-foreground px-2 py-6 text-center text-sm">
@@ -3903,7 +3902,7 @@ export default function AppointmentsPageClient({
                     })
                   )}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
           </CardContent>
         </Card>

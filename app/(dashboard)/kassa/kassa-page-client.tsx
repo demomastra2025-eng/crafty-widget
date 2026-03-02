@@ -31,7 +31,6 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -717,7 +716,7 @@ export default function KassaPageClient({
                 </div>
               </div>
 
-              <ScrollArea className="min-h-[20rem] flex-1 rounded-md">
+              <div className="rounded-md">
                 <div className="space-y-1 p-2">
                   {allEmployees.length === 0 ? (
                     <div className="text-muted-foreground px-2 py-6 text-center text-sm">
@@ -753,7 +752,7 @@ export default function KassaPageClient({
                     })
                   )}
                 </div>
-              </ScrollArea>
+              </div>
 
             </div>
           </CardContent>
