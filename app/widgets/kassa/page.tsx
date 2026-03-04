@@ -60,8 +60,11 @@ export default function WidgetsKassaPage() {
 
   if (!loaded) {
     return (
-      <div className="flex h-screen w-full items-center justify-center p-4 text-muted-foreground">
-        Загрузка данных виджета...
+      <div className="flex h-screen w-full items-center justify-center p-4">
+        <div
+          className="border-primary/20 border-t-primary size-8 animate-spin rounded-full border-2"
+          aria-hidden="true"
+        />
       </div>
     );
   }

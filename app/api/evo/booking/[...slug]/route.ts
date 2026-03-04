@@ -6,22 +6,32 @@ import {
   BookingServiceError,
   cancelBookingAppointment,
   createBookingAppointment,
+  createBookingClient,
   createBookingEmployee,
+  createBookingService,
   createBookingHoliday,
+  createBookingWorkdayOverride,
   createBookingTimeOff,
   deleteBookingHoliday,
+  deleteBookingWorkdayOverride,
   deleteBookingTimeOff,
   fetchBookingCalendarView,
   listBookingEmployees,
+  listBookingClients,
+  listBookingServices,
   listBookingHolidays,
+  listBookingWorkdayOverrides,
   markBookingExpensePaid,
   payAllBookingExpenses,
   replaceBookingEmployeeBreakRules,
   replaceBookingEmployeeWorkRules,
   updateBookingHoliday,
+  updateBookingWorkdayOverride,
   updateBookingTimeOff,
   updateBookingEmployee,
+  updateBookingClient,
   updateBookingAppointment,
+  updateBookingService,
 } from "@/lib/server/booking-service";
 
 export const runtime = "nodejs";
@@ -39,12 +49,18 @@ type RouteParams = { slug?: string[] };
 type RouteContext = { params: Promise<RouteParams> };
 type CreateEmployeePayload = Parameters<typeof createBookingEmployee>[1];
 type UpdateEmployeePayload = Parameters<typeof updateBookingEmployee>[2];
+type CreateClientPayload = Parameters<typeof createBookingClient>[1];
+type UpdateClientPayload = Parameters<typeof updateBookingClient>[2];
+type CreateServicePayload = Parameters<typeof createBookingService>[1];
+type UpdateServicePayload = Parameters<typeof updateBookingService>[2];
 type CreateAppointmentPayload = Parameters<typeof createBookingAppointment>[1];
 type UpdateAppointmentPayload = Parameters<typeof updateBookingAppointment>[2];
 type WorkRulesPayload = Parameters<typeof replaceBookingEmployeeWorkRules>[2];
 type BreakRulesPayload = Parameters<typeof replaceBookingEmployeeBreakRules>[2];
 type CreateHolidayPayload = Parameters<typeof createBookingHoliday>[1];
 type UpdateHolidayPayload = Parameters<typeof updateBookingHoliday>[2];
+type CreateWorkdayOverridePayload = Parameters<typeof createBookingWorkdayOverride>[1];
+type UpdateWorkdayOverridePayload = Parameters<typeof updateBookingWorkdayOverride>[2];
 type CreateTimeOffPayload = Parameters<typeof createBookingTimeOff>[1];
 type UpdateTimeOffPayload = Parameters<typeof updateBookingTimeOff>[2];
 type AddAppointmentPaymentPayload = Parameters<typeof addBookingAppointmentPayment>[2];
@@ -147,6 +163,9 @@ function mapError(error: unknown) {
     if (pgLike.constraint?.includes("uq_calendar_appointments_idempotency")) {
       return errorResponse(409, "DUPLICATE_IDEMPOTENCY_KEY", "idempotencyKey must be unique within company");
     }
+    if (pgLike.constraint?.includes("uq_calendar_workday_overrides_employee_date")) {
+      return errorResponse(409, "WORKDAY_OVERRIDE_CONFLICT", "Specific workday already exists for this employee and date");
+    }
     return errorResponse(409, "CONFLICT", pgLike.message || "Resource conflict");
   }
 
@@ -179,6 +198,20 @@ async function dispatchGet(request: NextRequest, slug: string[], companyId: stri
     return NextResponse.json(result);
   }
 
+  if (slug.length === 1 && slug[0] === "clients") {
+    const result = await listBookingClients(companyId, {
+      search: request.nextUrl.searchParams.get("search") || undefined,
+      limit: parseNumber(request.nextUrl.searchParams.get("limit")),
+    });
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 1 && slug[0] === "services") {
+    const includeInactive = parseBoolean(request.nextUrl.searchParams.get("includeInactive")) || false;
+    const result = await listBookingServices(companyId, { includeInactive });
+    return NextResponse.json(result);
+  }
+
   if (slug.length === 2 && slug[0] === "calendar" && slug[1] === "view") {
     const result = await fetchBookingCalendarView(companyId, {
       view: String(request.nextUrl.searchParams.get("view") || "") as "day" | "week" | "month",
@@ -200,6 +233,16 @@ async function dispatchGet(request: NextRequest, slug: string[], companyId: stri
     return NextResponse.json(result);
   }
 
+  if (slug.length === 1 && slug[0] === "workday-overrides") {
+    const result = await listBookingWorkdayOverrides(companyId, {
+      employeeId: request.nextUrl.searchParams.get("employeeId") || undefined,
+      from: request.nextUrl.searchParams.get("from") || undefined,
+      to: request.nextUrl.searchParams.get("to") || undefined,
+      limit: parseNumber(request.nextUrl.searchParams.get("limit")),
+    });
+    return NextResponse.json(result);
+  }
+
   return notFound();
 }
 
@@ -208,6 +251,16 @@ async function dispatchPost(request: NextRequest, slug: string[], companyId: str
 
   if (slug.length === 1 && slug[0] === "employees") {
     const result = await createBookingEmployee(companyId, body as CreateEmployeePayload);
+    return NextResponse.json(result, { status: 201 });
+  }
+
+  if (slug.length === 1 && slug[0] === "clients") {
+    const result = await createBookingClient(companyId, body as CreateClientPayload);
+    return NextResponse.json(result, { status: 201 });
+  }
+
+  if (slug.length === 1 && slug[0] === "services") {
+    const result = await createBookingService(companyId, body as CreateServicePayload);
     return NextResponse.json(result, { status: 201 });
   }
 
@@ -243,6 +296,11 @@ async function dispatchPost(request: NextRequest, slug: string[], companyId: str
 
   if (slug.length === 1 && slug[0] === "holidays") {
     const result = await createBookingHoliday(companyId, body as CreateHolidayPayload);
+    return NextResponse.json(result, { status: 201 });
+  }
+
+  if (slug.length === 1 && slug[0] === "workday-overrides") {
+    const result = await createBookingWorkdayOverride(companyId, body as CreateWorkdayOverridePayload);
     return NextResponse.json(result, { status: 201 });
   }
 
@@ -289,9 +347,27 @@ async function dispatchPatch(request: NextRequest, slug: string[], companyId: st
     return NextResponse.json(result);
   }
 
+  if (slug.length === 2 && slug[0] === "clients") {
+    const body = await readJsonBody(request);
+    const result = await updateBookingClient(companyId, slug[1], body as UpdateClientPayload);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 2 && slug[0] === "services") {
+    const body = await readJsonBody(request);
+    const result = await updateBookingService(companyId, slug[1], body as UpdateServicePayload);
+    return NextResponse.json(result);
+  }
+
   if (slug.length === 2 && slug[0] === "holidays") {
     const body = await readJsonBody(request);
     const result = await updateBookingHoliday(companyId, slug[1], body as UpdateHolidayPayload);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 2 && slug[0] === "workday-overrides") {
+    const body = await readJsonBody(request);
+    const result = await updateBookingWorkdayOverride(companyId, slug[1], body as UpdateWorkdayOverridePayload);
     return NextResponse.json(result);
   }
 
@@ -319,6 +395,11 @@ async function dispatchPatch(request: NextRequest, slug: string[], companyId: st
 async function dispatchDelete(_request: NextRequest, slug: string[], companyId: string) {
   if (slug.length === 2 && slug[0] === "holidays") {
     const result = await deleteBookingHoliday(companyId, slug[1]);
+    return NextResponse.json(result);
+  }
+
+  if (slug.length === 2 && slug[0] === "workday-overrides") {
+    const result = await deleteBookingWorkdayOverride(companyId, slug[1]);
     return NextResponse.json(result);
   }
 

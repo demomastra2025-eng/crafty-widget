@@ -10,12 +10,15 @@ type BookingPaymentStatus = "awaiting_payment" | "prepaid" | "paid" | "cancelled
 type BookingExpenseStatus = "unpaid" | "paid";
 type BookingCompensationType = "percent" | "fixed";
 type BookingPaymentKind = "prepaid" | "payment" | "adjustment";
+type BookingAppointmentType = "primary" | "secondary" | "other";
 
 type BookingEmployee = {
   id: string;
   companyId: string;
   name: string;
   specialty?: string | null;
+  photoUrl?: string | null;
+  description?: string | null;
   color?: string | null;
   timezone: string;
   slotDurationMin: number;
@@ -55,6 +58,20 @@ type BookingHoliday = {
   isWorkingDayOverride: boolean;
 };
 
+type BookingWorkdayOverride = {
+  id: string;
+  companyId: string;
+  employeeId: string;
+  date: string;
+  startMinute: number;
+  endMinute: number;
+  breakStartMinute: number | null;
+  breakEndMinute: number | null;
+  breakTitle?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
 type BookingTimeOff = {
   id: string;
   companyId: string;
@@ -70,10 +87,16 @@ type BookingAppointment = {
   id: string;
   companyId: string;
   employeeId: string;
+  clientId?: string | null;
+  serviceId?: string | null;
+  serviceNameSnapshot?: string | null;
+  serviceTypeSnapshot?: BookingAppointmentType | string | null;
+  serviceDurationMinSnapshot?: number | null;
   startsAt: string;
   endsAt: string;
   durationMin?: number | null;
   status: BookingStatus | string;
+  appointmentType?: BookingAppointmentType | string | null;
   clientName: string;
   clientPhone?: string | null;
   clientIin?: string | null;
@@ -90,6 +113,47 @@ type BookingAppointment = {
   settlementAmount: number;
   settlementPaymentMethod?: BookingPaymentMethod | string | null;
   paymentStatus: BookingPaymentStatus | string;
+};
+
+type BookingClient = {
+  id: string;
+  companyId: string;
+  fullName: string;
+  phone?: string | null;
+  iin?: string | null;
+  birthDate?: string | null;
+  gender?: "male" | "female" | string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+type BookingServicePrice = {
+  id: string;
+  companyId: string;
+  serviceId: string;
+  employeeId: string;
+  price: number;
+  compensationType: BookingCompensationType | string;
+  compensationValue: number;
+  isActive: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+type BookingService = {
+  id: string;
+  companyId: string;
+  name: string;
+  basePrice: number;
+  durationMin: number;
+  category?: string | null;
+  direction?: string | null;
+  serviceType?: string | null;
+  description?: string | null;
+  isActive: boolean;
+  prices: BookingServicePrice[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 type BookingExpense = {
@@ -129,6 +193,7 @@ type BookingCalendarViewResponse = {
   workRules: BookingWorkRule[];
   breakRules: BookingBreakRule[];
   holidays: BookingHoliday[];
+  workdayOverrides: BookingWorkdayOverride[];
   timeOff: BookingTimeOff[];
   appointments: BookingAppointment[];
   payments: BookingPayment[];
@@ -147,6 +212,8 @@ type BookingRuleRangeInput = {
 type EmployeeInput = {
   name: string;
   specialty?: string;
+  photoUrl?: string;
+  description?: string;
   color?: string;
   timezone?: string;
   slotDurationMin?: number;
@@ -157,6 +224,8 @@ type EmployeeInput = {
 type UpdateEmployeeInput = {
   name?: string;
   specialty?: string | null;
+  photoUrl?: string | null;
+  description?: string | null;
   color?: string | null;
   slotDurationMin?: number;
   compensationType?: BookingCompensationType | string;
@@ -164,14 +233,67 @@ type UpdateEmployeeInput = {
   isActive?: boolean;
 };
 
+type ClientInput = {
+  fullName: string;
+  phone?: string;
+  iin?: string;
+  birthDate?: string | null;
+  gender?: string | null;
+};
+
+type UpdateClientInput = {
+  fullName?: string;
+  phone?: string | null;
+  iin?: string | null;
+  birthDate?: string | null;
+  gender?: string | null;
+};
+
+type ServicePriceInput = {
+  employeeId: string;
+  price?: number;
+  compensationType?: BookingCompensationType | string;
+  compensationValue?: number;
+  isActive?: boolean;
+};
+
+type ServiceInput = {
+  name: string;
+  basePrice?: number;
+  durationMin?: number;
+  category?: string;
+  direction?: string;
+  serviceType?: string;
+  description?: string;
+  isActive?: boolean;
+  employeePrices?: ServicePriceInput[];
+};
+
+type UpdateServiceInput = {
+  name?: string;
+  basePrice?: number;
+  durationMin?: number;
+  category?: string | null;
+  direction?: string | null;
+  serviceType?: string | null;
+  description?: string | null;
+  isActive?: boolean;
+  employeePrices?: ServicePriceInput[];
+};
+
 type CreateAppointmentInput = {
   employeeId: string;
+  clientId?: string | null;
+  serviceId?: string | null;
   startsAt: string;
   endsAt: string;
   durationMin?: number;
+  appointmentType?: BookingAppointmentType | string;
   clientName: string;
   clientPhone?: string;
   clientIin?: string;
+  clientBirthDate?: string | null;
+  clientGender?: string | null;
   clientComment?: string;
   source?: string;
   externalRef?: string;
@@ -205,6 +327,26 @@ type UpdateHolidayInput = {
   isWorkingDayOverride?: boolean;
 };
 
+type CreateWorkdayOverrideInput = {
+  employeeId: string;
+  date: string;
+  startMinute: number;
+  endMinute: number;
+  breakStartMinute?: number | null;
+  breakEndMinute?: number | null;
+  breakTitle?: string | null;
+};
+
+type UpdateWorkdayOverrideInput = {
+  employeeId?: string;
+  date?: string;
+  startMinute?: number;
+  endMinute?: number;
+  breakStartMinute?: number | null;
+  breakEndMinute?: number | null;
+  breakTitle?: string | null;
+};
+
 type CreateTimeOffInput = {
   employeeId?: string | null;
   type: string;
@@ -236,10 +378,26 @@ type EmployeesListParams = {
   includeInactive?: boolean;
 };
 
+type ServicesListParams = {
+  includeInactive?: boolean;
+};
+
+type ClientsListParams = {
+  search?: string;
+  limit?: number;
+};
+
 type HolidaysListParams = {
   year?: number;
   from?: string;
   to?: string;
+};
+
+type WorkdayOverridesListParams = {
+  employeeId?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
 };
 
 type EmployeeRow = {
@@ -247,6 +405,8 @@ type EmployeeRow = {
   company_id: string;
   name: string;
   specialty: string | null;
+  photo_url: string | null;
+  description: string | null;
   color: string | null;
   timezone: string;
   slot_duration_min: number;
@@ -294,6 +454,20 @@ type HolidayRow = {
   is_working_day_override: boolean;
 };
 
+type WorkdayOverrideRow = {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  date: string | Date;
+  start_minute: number;
+  end_minute: number;
+  break_start_minute: number | null;
+  break_end_minute: number | null;
+  break_title: string | null;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
 type TimeOffRow = {
   id: string;
   company_id: string;
@@ -309,10 +483,16 @@ type AppointmentRow = {
   id: string;
   company_id: string;
   employee_id: string;
+  client_id: string | null;
+  service_id: string | null;
+  service_name_snapshot: string | null;
+  service_type_snapshot: string | null;
+  service_duration_min_snapshot: number | null;
   starts_at: Date | string;
   ends_at: Date | string;
   duration_min: number | null;
   status: BookingStatus | string;
+  appointment_type: BookingAppointmentType | string | null;
   client_name: string;
   client_phone: string | null;
   client_iin: string | null;
@@ -327,10 +507,52 @@ type AppointmentRow = {
   updated_at: Date | string | null;
 };
 
+type ClientRow = {
+  id: string;
+  company_id: string;
+  full_name: string;
+  phone: string | null;
+  iin: string | null;
+  birth_date: string | null;
+  gender: string | null;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type ServiceRow = {
+  id: string;
+  company_id: string;
+  name: string;
+  base_price: number;
+  duration_min: number;
+  category: string | null;
+  direction: string | null;
+  service_type: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
+type ServicePriceRow = {
+  id: string;
+  company_id: string;
+  service_id: string;
+  employee_id: string;
+  price: number;
+  compensation_type: BookingCompensationType | string;
+  compensation_value: number;
+  is_active: boolean;
+  created_at: Date | string | null;
+  updated_at: Date | string | null;
+};
+
 type AppointmentFinanceRow = {
   appointment_id: string;
   company_id: string;
   service_amount: number;
+  compensation_type_snapshot: BookingCompensationType | string | null;
+  compensation_value_snapshot: number | null;
   prepaid_amount: number;
   prepaid_payment_method: BookingPaymentMethod | string | null;
   settlement_amount: number;
@@ -365,11 +587,13 @@ type AppointmentPaymentRow = {
 
 const DEFAULT_TIMEZONE = "Asia/Almaty";
 const DEFAULT_SLOT_STEP_MIN = 5;
+const DEFAULT_SERVICE_DURATION_MIN = 30;
 const DEFAULT_WORKDAY_WEEKDAYS = [1, 2, 3, 4, 5] as const;
 const DEFAULT_WORKDAY_START_MINUTE = 9 * 60;
 const DEFAULT_WORKDAY_END_MINUTE = 18 * 60;
 const ACTIVE_APPOINTMENT_STATUS_SQL = "status <> 'cancelled'";
 const BOOKING_STATUSES: BookingStatus[] = ["scheduled", "confirmed", "completed", "cancelled", "no_show"];
+const BOOKING_APPOINTMENT_TYPES: BookingAppointmentType[] = ["primary", "secondary", "other"];
 const BOOKING_PAYMENT_METHODS: BookingPaymentMethod[] = ["kaspi_transfer", "kaspi_qr", "cash", "bank_transfer"];
 const BOOKING_PAYMENT_STATUSES: BookingPaymentStatus[] = ["awaiting_payment", "prepaid", "paid", "cancelled"];
 const BOOKING_EXPENSE_STATUSES: BookingExpenseStatus[] = ["unpaid", "paid"];
@@ -463,6 +687,30 @@ function parseStatus(value: unknown): BookingStatus {
     throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported status '${status}'`);
   }
   return status;
+}
+
+function parseAppointmentType(value: unknown, fallback: BookingAppointmentType = "primary"): BookingAppointmentType {
+  const appointmentType = normalizeOptionalText(value);
+  if (!appointmentType) return fallback;
+  const normalized = appointmentType.toLowerCase() as BookingAppointmentType;
+  if (!BOOKING_APPOINTMENT_TYPES.includes(normalized)) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported appointmentType '${normalized}'`);
+  }
+  return normalized;
+}
+
+function normalizeAppointmentPhone(value: unknown): string | null {
+  const phone = normalizeOptionalText(value);
+  if (!phone) return null;
+
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) return null;
+  if (digits.length === 11) return `7${digits}`;
+  if (digits.length === 12 && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return `7${digits.slice(1)}`;
+  }
+
+  throw new BookingServiceError(400, "VALIDATION_ERROR", "clientPhone must contain 11 digits after +7");
 }
 
 function clampMoney(value: unknown, fallback = 0): number {
@@ -723,12 +971,61 @@ function mapEmployee(row: EmployeeRow, compensation?: EmployeeCompensationRow | 
     companyId: row.company_id,
     name: row.name,
     specialty: row.specialty,
+    photoUrl: row.photo_url,
+    description: row.description,
     color: row.color,
     timezone: row.timezone || DEFAULT_TIMEZONE,
     slotDurationMin: row.slot_duration_min,
     compensationType: compensation?.compensation_type || "percent",
     compensationValue: compensation?.compensation_value ?? 0,
     isActive: row.is_active,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function mapServicePrice(row: ServicePriceRow): BookingServicePrice {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    serviceId: row.service_id,
+    employeeId: row.employee_id,
+    price: row.price,
+    compensationType: row.compensation_type || "percent",
+    compensationValue: row.compensation_value ?? 0,
+    isActive: row.is_active,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function mapService(row: ServiceRow, prices: ServicePriceRow[] = []): BookingService {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    name: row.name,
+    basePrice: row.base_price ?? 0,
+    durationMin: row.duration_min,
+    category: row.category,
+    direction: row.direction,
+    serviceType: row.service_type,
+    description: row.description,
+    isActive: row.is_active,
+    prices: prices.map(mapServicePrice),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
+function mapClient(row: ClientRow): BookingClient {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    fullName: row.full_name,
+    phone: row.phone,
+    iin: row.iin,
+    birthDate: row.birth_date,
+    gender: row.gender,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
@@ -769,6 +1066,22 @@ function mapHoliday(row: HolidayRow): BookingHoliday {
   };
 }
 
+function mapWorkdayOverride(row: WorkdayOverrideRow): BookingWorkdayOverride {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    employeeId: row.employee_id,
+    date: normalizeDateOnly(row.date),
+    startMinute: row.start_minute,
+    endMinute: row.end_minute,
+    breakStartMinute: row.break_start_minute,
+    breakEndMinute: row.break_end_minute,
+    breakTitle: row.break_title,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+  };
+}
+
 function mapTimeOff(row: TimeOffRow): BookingTimeOff {
   return {
     id: row.id,
@@ -787,10 +1100,16 @@ function mapAppointment(row: AppointmentRow, finance?: AppointmentFinanceRow | n
     id: row.id,
     companyId: row.company_id,
     employeeId: row.employee_id,
+    clientId: row.client_id,
+    serviceId: row.service_id,
+    serviceNameSnapshot: row.service_name_snapshot,
+    serviceTypeSnapshot: row.service_type_snapshot,
+    serviceDurationMinSnapshot: row.service_duration_min_snapshot,
     startsAt: toIso(row.starts_at) || "",
     endsAt: toIso(row.ends_at) || "",
     durationMin: row.duration_min,
     status: row.status,
+    appointmentType: row.appointment_type || "primary",
     clientName: row.client_name,
     clientPhone: row.client_phone,
     clientIin: row.client_iin,
@@ -850,6 +1169,8 @@ async function ensureBookingSchema() {
           company_id TEXT NOT NULL,
           name TEXT NOT NULL,
           specialty TEXT,
+          photo_url TEXT,
+          description TEXT,
           color TEXT,
           timezone TEXT NOT NULL DEFAULT '${DEFAULT_TIMEZONE}',
           slot_duration_min INTEGER NOT NULL DEFAULT 30,
@@ -894,6 +1215,22 @@ async function ensureBookingSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
+        CREATE TABLE IF NOT EXISTS calendar.workday_overrides (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          employee_id TEXT NOT NULL REFERENCES calendar.employees(id) ON DELETE CASCADE,
+          date DATE NOT NULL,
+          start_minute INTEGER NOT NULL CHECK (start_minute BETWEEN 0 AND 1439),
+          end_minute INTEGER NOT NULL CHECK (end_minute BETWEEN 1 AND 1440),
+          break_start_minute INTEGER CHECK (break_start_minute BETWEEN 0 AND 1439),
+          break_end_minute INTEGER CHECK (break_end_minute BETWEEN 1 AND 1440),
+          break_title TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT chk_calendar_workday_overrides_range CHECK (end_minute > start_minute),
+          CONSTRAINT uq_calendar_workday_overrides_employee_date UNIQUE (employee_id, date)
+        );
+
         CREATE TABLE IF NOT EXISTS calendar.time_off (
           id TEXT PRIMARY KEY,
           company_id TEXT NOT NULL,
@@ -907,14 +1244,31 @@ async function ensureBookingSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
+        CREATE TABLE IF NOT EXISTS calendar.clients (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          full_name TEXT NOT NULL,
+          phone TEXT,
+          iin TEXT,
+          birth_date DATE,
+          gender TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
         CREATE TABLE IF NOT EXISTS calendar.appointments (
           id TEXT PRIMARY KEY,
           company_id TEXT NOT NULL,
           employee_id TEXT NOT NULL REFERENCES calendar.employees(id) ON DELETE CASCADE,
+          client_id TEXT REFERENCES calendar.clients(id) ON DELETE SET NULL,
+          service_name_snapshot TEXT,
+          service_type_snapshot TEXT,
+          service_duration_min_snapshot INTEGER,
           starts_at TIMESTAMPTZ NOT NULL,
           ends_at TIMESTAMPTZ NOT NULL,
           duration_min INTEGER,
           status TEXT NOT NULL DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'confirmed', 'completed', 'cancelled', 'no_show')),
+          appointment_type TEXT NOT NULL DEFAULT 'primary',
           client_name TEXT NOT NULL,
           client_phone TEXT,
           client_iin TEXT,
@@ -942,6 +1296,8 @@ async function ensureBookingSchema() {
           appointment_id TEXT PRIMARY KEY REFERENCES calendar.appointments(id) ON DELETE CASCADE,
           company_id TEXT NOT NULL,
           service_amount INTEGER NOT NULL DEFAULT 0,
+          compensation_type_snapshot TEXT,
+          compensation_value_snapshot INTEGER,
           prepaid_amount INTEGER NOT NULL DEFAULT 0,
           prepaid_payment_method TEXT,
           settlement_amount INTEGER NOT NULL DEFAULT 0,
@@ -974,6 +1330,35 @@ async function ensureBookingSchema() {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
+        CREATE TABLE IF NOT EXISTS calendar.services (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          base_price INTEGER NOT NULL DEFAULT 0,
+          duration_min INTEGER NOT NULL DEFAULT 30,
+          category TEXT,
+          direction TEXT,
+          service_type TEXT,
+          description TEXT,
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS calendar.service_prices (
+          id TEXT PRIMARY KEY,
+          company_id TEXT NOT NULL,
+          service_id TEXT NOT NULL REFERENCES calendar.services(id) ON DELETE CASCADE,
+          employee_id TEXT NOT NULL REFERENCES calendar.employees(id) ON DELETE CASCADE,
+          price INTEGER NOT NULL DEFAULT 0,
+          compensation_type TEXT NOT NULL DEFAULT 'percent',
+          compensation_value INTEGER NOT NULL DEFAULT 0,
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CONSTRAINT uq_calendar_service_prices_service_employee UNIQUE (service_id, employee_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_calendar_employees_company_active
           ON calendar.employees (company_id, is_active);
 
@@ -986,14 +1371,36 @@ async function ensureBookingSchema() {
         CREATE INDEX IF NOT EXISTS idx_calendar_holidays_company_date
           ON calendar.holidays (company_id, date);
 
+        CREATE INDEX IF NOT EXISTS idx_calendar_workday_overrides_company_employee_date
+          ON calendar.workday_overrides (company_id, employee_id, date);
+
         CREATE INDEX IF NOT EXISTS idx_calendar_time_off_company_employee_range
           ON calendar.time_off (company_id, employee_id, starts_at, ends_at);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_clients_company_created
+          ON calendar.clients (company_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_clients_company_name
+          ON calendar.clients (company_id, full_name);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_clients_company_phone
+          ON calendar.clients (company_id, phone);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_clients_company_iin
+          ON calendar.clients (company_id, iin)
+          WHERE iin IS NOT NULL;
 
         CREATE INDEX IF NOT EXISTS idx_calendar_appointments_company_employee_range
           ON calendar.appointments (company_id, employee_id, starts_at, ends_at);
 
         CREATE INDEX IF NOT EXISTS idx_calendar_employee_compensation_company_employee
           ON calendar.employee_compensation (company_id, employee_id);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_services_company_active
+          ON calendar.services (company_id, is_active, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_calendar_service_prices_company_service_employee
+          ON calendar.service_prices (company_id, service_id, employee_id, is_active);
 
         CREATE INDEX IF NOT EXISTS idx_calendar_appointment_finance_company_status
           ON calendar.appointment_finance (company_id, payment_status);
@@ -1019,6 +1426,96 @@ async function ensureBookingSchema() {
         CREATE UNIQUE INDEX IF NOT EXISTS uq_calendar_appointments_idempotency
           ON calendar.appointments (company_id, idempotency_key)
           WHERE idempotency_key IS NOT NULL;
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.services
+        ADD COLUMN IF NOT EXISTS base_price INTEGER NOT NULL DEFAULT 0
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.services
+        ADD COLUMN IF NOT EXISTS duration_min INTEGER NOT NULL DEFAULT 30
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.service_prices
+        ADD COLUMN IF NOT EXISTS compensation_type TEXT NOT NULL DEFAULT 'percent'
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.service_prices
+        ADD COLUMN IF NOT EXISTS compensation_value INTEGER NOT NULL DEFAULT 0
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.employees
+        ADD COLUMN IF NOT EXISTS photo_url TEXT
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.employees
+        ADD COLUMN IF NOT EXISTS description TEXT
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointments
+        ADD COLUMN IF NOT EXISTS appointment_type TEXT NOT NULL DEFAULT 'primary'
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointments
+        ADD COLUMN IF NOT EXISTS client_id TEXT REFERENCES calendar.clients(id) ON DELETE SET NULL
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointments
+        ADD COLUMN IF NOT EXISTS service_id TEXT REFERENCES calendar.services(id) ON DELETE SET NULL
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointments
+        ADD COLUMN IF NOT EXISTS service_name_snapshot TEXT
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointments
+        ADD COLUMN IF NOT EXISTS service_type_snapshot TEXT
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointments
+        ADD COLUMN IF NOT EXISTS service_duration_min_snapshot INTEGER
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointment_finance
+        ADD COLUMN IF NOT EXISTS compensation_type_snapshot TEXT
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.appointment_finance
+        ADD COLUMN IF NOT EXISTS compensation_value_snapshot INTEGER
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.workday_overrides
+        ADD COLUMN IF NOT EXISTS break_start_minute INTEGER
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.workday_overrides
+        ADD COLUMN IF NOT EXISTS break_end_minute INTEGER
+      `);
+
+      await client.query(`
+        ALTER TABLE calendar.workday_overrides
+        ADD COLUMN IF NOT EXISTS break_title TEXT
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_calendar_appointments_company_service
+          ON calendar.appointments (company_id, service_id)
       `);
 
       const { rows: holidayColumns } = await client.query<{ column_name: string }>(
@@ -1075,6 +1572,23 @@ async function loadEmployeeTx(client: PoolClient, companyId: string, employeeId:
   return employee;
 }
 
+async function loadClientTx(client: PoolClient, companyId: string, clientId: string) {
+  const { rows } = await client.query<ClientRow>(
+    `
+      SELECT *
+      FROM calendar.clients
+      WHERE company_id = $1 AND id = $2
+      LIMIT 1
+    `,
+    [companyId, clientId],
+  );
+  const bookingClient = rows[0];
+  if (!bookingClient) {
+    throw new BookingServiceError(404, "CLIENT_NOT_FOUND", "Client not found");
+  }
+  return bookingClient;
+}
+
 async function loadEmployeeCompensationTx(client: PoolClient, companyId: string, employeeId: string) {
   const { rows } = await client.query<EmployeeCompensationRow>(
     `
@@ -1086,6 +1600,170 @@ async function loadEmployeeCompensationTx(client: PoolClient, companyId: string,
     [companyId, employeeId],
   );
   return rows[0] || null;
+}
+
+async function loadServiceTx(client: PoolClient, companyId: string, serviceId: string) {
+  const { rows } = await client.query<ServiceRow>(
+    `
+      SELECT *
+      FROM calendar.services
+      WHERE company_id = $1 AND id = $2
+      LIMIT 1
+    `,
+    [companyId, serviceId],
+  );
+  const service = rows[0];
+  if (!service) {
+    throw new BookingServiceError(404, "SERVICE_NOT_FOUND", "Service not found");
+  }
+  return service;
+}
+
+async function loadServicePricesByServiceIdsTx(client: PoolClient, companyId: string, serviceIds: string[]) {
+  if (!serviceIds.length) return [] as ServicePriceRow[];
+  const { rows } = await client.query<ServicePriceRow>(
+    `
+      SELECT *
+      FROM calendar.service_prices
+      WHERE company_id = $1
+        AND service_id = ANY($2::text[])
+      ORDER BY employee_id ASC, created_at ASC
+    `,
+    [companyId, serviceIds],
+  );
+  return rows;
+}
+
+async function loadServicePriceForEmployeeTx(
+  client: PoolClient,
+  companyId: string,
+  serviceId: string,
+  employeeId: string,
+) {
+  const { rows } = await client.query<ServicePriceRow>(
+    `
+      SELECT *
+      FROM calendar.service_prices
+      WHERE company_id = $1
+        AND service_id = $2
+        AND employee_id = $3
+      LIMIT 1
+    `,
+    [companyId, serviceId, employeeId],
+  );
+  return rows[0] || null;
+}
+
+function normalizeServiceType(value: unknown, fallback: BookingAppointmentType = "primary") {
+  const raw = normalizeOptionalText(value);
+  if (!raw) return fallback;
+  const normalized = raw.toLowerCase();
+  if (normalized === "primary" || normalized.includes("первич")) return "primary";
+  if (normalized === "secondary" || normalized.includes("вторич") || normalized.includes("повтор")) return "secondary";
+  if (normalized === "other" || normalized.includes("друг")) return "other";
+  throw new BookingServiceError(400, "VALIDATION_ERROR", `Unsupported serviceType '${normalized}'`);
+}
+
+function resolveServicePriceForEmployee(service: { base_price: number }, servicePrice?: ServicePriceRow | null) {
+  if (servicePrice?.is_active && servicePrice.price > 0) {
+    return servicePrice.price;
+  }
+  return clampMoney(service.base_price, 0);
+}
+
+async function resolveAppointmentConfigSnapshotTx(
+  client: PoolClient,
+  params: {
+    companyId: string;
+    employeeId: string;
+    serviceId?: string | null;
+    validateServiceAvailability?: boolean;
+  },
+) {
+  const validateServiceAvailability = parseBool(params.validateServiceAvailability, true);
+  const serviceId = normalizeOptionalText(params.serviceId);
+
+  if (!serviceId) {
+    const employeeCompensation = await loadEmployeeCompensationTx(client, params.companyId, params.employeeId);
+    return {
+      resolvedServicePrice: null as number | null,
+      serviceNameSnapshot: null as string | null,
+      serviceTypeSnapshot: null as BookingAppointmentType | string | null,
+      serviceDurationMinSnapshot: null as number | null,
+      compensationTypeSnapshot: employeeCompensation?.compensation_type || null,
+      compensationValueSnapshot: employeeCompensation ? clampMoney(employeeCompensation.compensation_value) : 0,
+    };
+  }
+
+  const service = await loadServiceTx(client, params.companyId, serviceId);
+  const servicePrice = await loadServicePriceForEmployeeTx(client, params.companyId, serviceId, params.employeeId);
+  const resolvedServicePrice = resolveServicePriceForEmployee(service, servicePrice);
+
+  if (validateServiceAvailability && (!service.is_active || resolvedServicePrice <= 0)) {
+    throw new BookingServiceError(
+      400,
+      "SERVICE_NOT_AVAILABLE_FOR_EMPLOYEE",
+      "Service is not available for the selected employee",
+    );
+  }
+
+  let compensationTypeSnapshot: BookingCompensationType | string | null = null;
+  let compensationValueSnapshot = 0;
+
+  if (servicePrice?.is_active && servicePrice.price > 0) {
+    compensationTypeSnapshot = servicePrice.compensation_type || "percent";
+    compensationValueSnapshot = clampMoney(servicePrice.compensation_value);
+  } else {
+    const employeeCompensation = await loadEmployeeCompensationTx(client, params.companyId, params.employeeId);
+    compensationTypeSnapshot = employeeCompensation?.compensation_type || null;
+    compensationValueSnapshot = employeeCompensation ? clampMoney(employeeCompensation.compensation_value) : 0;
+  }
+
+  return {
+    resolvedServicePrice,
+    serviceNameSnapshot: service.name,
+    serviceTypeSnapshot: service.service_type || null,
+    serviceDurationMinSnapshot: service.duration_min ?? null,
+    compensationTypeSnapshot,
+    compensationValueSnapshot,
+  };
+}
+
+function normalizeServicePriceInputs(employeePrices: ServicePriceInput[] | undefined) {
+  const byEmployeeId = new Map<
+    string,
+    {
+      employeeId: string;
+      price: number;
+      compensationType: BookingCompensationType;
+      compensationValue: number;
+      isActive: boolean;
+    }
+  >();
+
+  for (const item of employeePrices || []) {
+    const employeeId = normalizeRequiredText(item?.employeeId, "employeePrices.employeeId");
+    const price = clampMoney(item?.price, 0);
+    const compensationType = parseCompensationType(item?.compensationType || "percent");
+    const compensationValueRaw = clampMoney(item?.compensationValue, 0);
+    const compensationValue =
+      compensationType === "percent" ? Math.max(0, Math.min(100, compensationValueRaw)) : compensationValueRaw;
+    const isActive = parseBool(item?.isActive, price > 0);
+
+    if (isActive && price <= 0) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Active employee service price must be greater than 0");
+    }
+
+    byEmployeeId.set(employeeId, {
+      employeeId,
+      price,
+      compensationType,
+      compensationValue,
+      isActive,
+    });
+  }
+
+  return Array.from(byEmployeeId.values());
 }
 
 async function upsertEmployeeCompensationTx(
@@ -1358,6 +2036,8 @@ async function upsertAppointmentFinanceTx(
     companyId: string;
     appointmentId: string;
     serviceAmount: number;
+    compensationTypeSnapshot?: BookingCompensationType | string | null;
+    compensationValueSnapshot?: number | null;
     prepaidAmount: number;
     prepaidPaymentMethod: BookingPaymentMethod | string | null;
     settlementAmount: number;
@@ -1371,6 +2051,8 @@ async function upsertAppointmentFinanceTx(
         appointment_id,
         company_id,
         service_amount,
+        compensation_type_snapshot,
+        compensation_value_snapshot,
         prepaid_amount,
         prepaid_payment_method,
         settlement_amount,
@@ -1379,11 +2061,13 @@ async function upsertAppointmentFinanceTx(
         created_at,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
       ON CONFLICT (appointment_id)
       DO UPDATE SET
         company_id = EXCLUDED.company_id,
         service_amount = EXCLUDED.service_amount,
+        compensation_type_snapshot = COALESCE(EXCLUDED.compensation_type_snapshot, calendar.appointment_finance.compensation_type_snapshot),
+        compensation_value_snapshot = COALESCE(EXCLUDED.compensation_value_snapshot, calendar.appointment_finance.compensation_value_snapshot),
         prepaid_amount = EXCLUDED.prepaid_amount,
         prepaid_payment_method = EXCLUDED.prepaid_payment_method,
         settlement_amount = EXCLUDED.settlement_amount,
@@ -1396,6 +2080,10 @@ async function upsertAppointmentFinanceTx(
       params.appointmentId,
       params.companyId,
       clampMoney(params.serviceAmount),
+      normalizeOptionalText(params.compensationTypeSnapshot),
+      params.compensationValueSnapshot === undefined || params.compensationValueSnapshot === null
+        ? null
+        : clampMoney(params.compensationValueSnapshot),
       clampMoney(params.prepaidAmount),
       params.prepaidPaymentMethod,
       clampMoney(params.settlementAmount),
@@ -1430,7 +2118,26 @@ async function syncExpenseForAppointmentTx(
     return existingExpense;
   }
 
-  const compensation = await loadEmployeeCompensationTx(client, params.companyId, params.appointment.employee_id);
+  let compensation: Pick<EmployeeCompensationRow, "compensation_type" | "compensation_value"> | null = null;
+  if (params.finance.compensation_type_snapshot) {
+    compensation = {
+      compensation_type: params.finance.compensation_type_snapshot,
+      compensation_value: params.finance.compensation_value_snapshot ?? 0,
+    };
+  } else {
+    const resolvedSnapshot = await resolveAppointmentConfigSnapshotTx(client, {
+      companyId: params.companyId,
+      employeeId: params.appointment.employee_id,
+      serviceId: params.appointment.service_id,
+      validateServiceAvailability: false,
+    });
+    if (resolvedSnapshot.compensationTypeSnapshot) {
+      compensation = {
+        compensation_type: resolvedSnapshot.compensationTypeSnapshot,
+        compensation_value: resolvedSnapshot.compensationValueSnapshot ?? 0,
+      };
+    }
+  }
   const amount = computeExpenseAmount(params.finance, compensation);
 
   if (existingExpense) {
@@ -1529,6 +2236,43 @@ async function assertHolidayUniquenessTx(
   }
 }
 
+async function loadWorkdayOverrideTx(client: PoolClient, companyId: string, workdayOverrideId: string) {
+  const { rows } = await client.query<WorkdayOverrideRow>(
+    `
+      SELECT *
+      FROM calendar.workday_overrides
+      WHERE company_id = $1 AND id = $2
+      LIMIT 1
+    `,
+    [companyId, workdayOverrideId],
+  );
+  const item = rows[0];
+  if (!item) {
+    throw new BookingServiceError(404, "WORKDAY_OVERRIDE_NOT_FOUND", "Workday override not found");
+  }
+  return item;
+}
+
+async function loadWorkdayOverrideByEmployeeDateTx(
+  client: PoolClient,
+  companyId: string,
+  employeeId: string,
+  date: string,
+) {
+  const { rows } = await client.query<WorkdayOverrideRow>(
+    `
+      SELECT *
+      FROM calendar.workday_overrides
+      WHERE company_id = $1
+        AND employee_id = $2
+        AND date = $3::date
+      LIMIT 1
+    `,
+    [companyId, employeeId, date],
+  );
+  return rows[0] || null;
+}
+
 async function loadTimeOffTx(client: PoolClient, companyId: string, timeOffId: string) {
   const { rows } = await client.query<TimeOffRow>(
     `
@@ -1562,6 +2306,53 @@ function normalizeRuleInput(rule: BookingRuleRangeInput, allowTitle: boolean) {
     endMinute,
     isActive: parseBool(rule.isActive, true),
     title: allowTitle ? normalizeOptionalText(rule.title) : null,
+  };
+}
+
+function normalizeWorkdayOverrideRangeInput(startMinuteRaw: unknown, endMinuteRaw: unknown) {
+  const startMinute = clampInt(startMinuteRaw, 0, 1439, -1);
+  const endMinute = clampInt(endMinuteRaw, 1, 1440, -1);
+  if (startMinute < 0 || endMinute < 1 || endMinute <= startMinute) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Invalid specific workday range");
+  }
+  return { startMinute, endMinute };
+}
+
+function normalizeWorkdayOverrideBreakInput(params: {
+  breakStartMinuteRaw: unknown;
+  breakEndMinuteRaw: unknown;
+  breakTitleRaw: unknown;
+  startMinute: number;
+  endMinute: number;
+}) {
+  const hasBreakStart = params.breakStartMinuteRaw !== undefined && params.breakStartMinuteRaw !== null && params.breakStartMinuteRaw !== "";
+  const hasBreakEnd = params.breakEndMinuteRaw !== undefined && params.breakEndMinuteRaw !== null && params.breakEndMinuteRaw !== "";
+
+  if (!hasBreakStart && !hasBreakEnd) {
+    return {
+      breakStartMinute: null,
+      breakEndMinute: null,
+      breakTitle: null,
+    };
+  }
+
+  if (!hasBreakStart || !hasBreakEnd) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Specific workday break requires both start and end");
+  }
+
+  const breakStartMinute = clampInt(params.breakStartMinuteRaw, 0, 1439, -1);
+  const breakEndMinute = clampInt(params.breakEndMinuteRaw, 1, 1440, -1);
+  if (breakStartMinute < 0 || breakEndMinute < 1 || breakEndMinute <= breakStartMinute) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Invalid specific workday break");
+  }
+  if (breakStartMinute < params.startMinute || breakEndMinute > params.endMinute) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Specific workday break must fit into working hours");
+  }
+
+  return {
+    breakStartMinute,
+    breakEndMinute,
+    breakTitle: normalizeOptionalText(params.breakTitleRaw),
   };
 }
 
@@ -1605,47 +2396,66 @@ async function assertAppointmentPoliciesTx(
     [companyId, startDateKey],
   );
 
-  if (holidayRows.some((holiday) => !holiday.is_working_day_override)) {
+  const workdayOverride = await loadWorkdayOverrideByEmployeeDateTx(client, companyId, employeeId, startDateKey);
+  const hasHolidayWorkOverride = holidayRows.some((holiday) => holiday.is_working_day_override);
+  if (holidayRows.some((holiday) => !holiday.is_working_day_override) && !hasHolidayWorkOverride && !workdayOverride) {
     throw new BookingServiceError(409, "BLOCKED_BY_HOLIDAY", "Date is blocked by holiday");
   }
 
-  const { rows: workRules } = await client.query<WorkRuleRow>(
-    `
-      SELECT *
-      FROM calendar.work_rules
-      WHERE company_id = $1
-        AND employee_id = $2
-        AND weekday = $3
-        AND is_active = TRUE
-      ORDER BY start_minute ASC
-    `,
-    [companyId, employeeId, weekday],
-  );
+  let insideWorkingHours = false;
+  if (workdayOverride) {
+    insideWorkingHours = startMinute >= workdayOverride.start_minute && endMinute <= workdayOverride.end_minute;
+  } else {
+    const { rows: workRules } = await client.query<WorkRuleRow>(
+      `
+        SELECT *
+        FROM calendar.work_rules
+        WHERE company_id = $1
+          AND employee_id = $2
+          AND weekday = $3
+          AND is_active = TRUE
+        ORDER BY start_minute ASC
+      `,
+      [companyId, employeeId, weekday],
+    );
 
-  if (!workRules.length) {
-    throw new BookingServiceError(409, "OUTSIDE_WORKING_HOURS", "No working rules configured for this day");
+    if (!workRules.length) {
+      throw new BookingServiceError(409, "OUTSIDE_WORKING_HOURS", "No working rules configured for this day");
+    }
+
+    insideWorkingHours = workRules.some(
+      (rule) => startMinute >= rule.start_minute && endMinute <= rule.end_minute,
+    );
   }
 
-  const insideWorkingHours = workRules.some(
-    (rule) => startMinute >= rule.start_minute && endMinute <= rule.end_minute,
-  );
   if (!insideWorkingHours) {
     throw new BookingServiceError(409, "OUTSIDE_WORKING_HOURS", "Appointment is outside working hours");
   }
 
-  const { rows: breakRules } = await client.query<BreakRuleRow>(
-    `
-      SELECT *
-      FROM calendar.break_rules
-      WHERE company_id = $1
-        AND employee_id = $2
-        AND weekday = $3
-        AND is_active = TRUE
-    `,
-    [companyId, employeeId, weekday],
-  );
+  const breakRanges = workdayOverride
+    ? workdayOverride.break_start_minute !== null && workdayOverride.break_end_minute !== null
+      ? [
+          {
+            start_minute: workdayOverride.break_start_minute,
+            end_minute: workdayOverride.break_end_minute,
+          },
+        ]
+      : []
+    : (
+        await client.query<Pick<BreakRuleRow, "start_minute" | "end_minute">>(
+          `
+            SELECT start_minute, end_minute
+            FROM calendar.break_rules
+            WHERE company_id = $1
+              AND employee_id = $2
+              AND weekday = $3
+              AND is_active = TRUE
+          `,
+          [companyId, employeeId, weekday],
+        )
+      ).rows;
 
-  const overlapsBreak = breakRules.some(
+  const overlapsBreak = breakRanges.some(
     (rule) => startMinute < rule.end_minute && rule.start_minute < endMinute,
   );
   if (overlapsBreak) {
@@ -1694,12 +2504,14 @@ function buildSlots(params: {
   workRules: BookingWorkRule[];
   breakRules: BookingBreakRule[];
   holidays: BookingHoliday[];
+  workdayOverrides: BookingWorkdayOverride[];
   timeOff: BookingTimeOff[];
   appointments: BookingAppointment[];
   durationMin?: number;
 }) {
   const workByEmployee = new Map<string, BookingWorkRule[]>();
   const breakByEmployee = new Map<string, BookingBreakRule[]>();
+  const workdayOverridesByEmployeeDate = new Map<string, BookingWorkdayOverride>();
   const holidaysList = params.holidays;
   const timeOffByEmployee = new Map<string, BookingTimeOff[]>();
   const globalTimeOff: BookingTimeOff[] = [];
@@ -1715,6 +2527,9 @@ function buildSlots(params: {
     const list = breakByEmployee.get(rule.employeeId) || [];
     list.push(rule);
     breakByEmployee.set(rule.employeeId, list);
+  }
+  for (const item of params.workdayOverrides) {
+    workdayOverridesByEmployeeDate.set(`${item.employeeId}|${item.date}`, item);
   }
   for (const item of params.timeOff) {
     if (!item.employeeId) {
@@ -1737,6 +2552,7 @@ function buildSlots(params: {
     const weekday = weekdayFromDateKey(dateKey, DEFAULT_TIMEZONE);
     const dayHoliday = holidaysList.filter((holiday) => holidayMatchesDate(holiday, dateKey));
     const blockedByHoliday = dayHoliday.some((holiday) => !holiday.isWorkingDayOverride);
+    const hasHolidayWorkOverride = dayHoliday.some((holiday) => holiday.isWorkingDayOverride);
 
     for (const employee of params.employees) {
       const employeeDurationMin = clampInt(employee.slotDurationMin, DEFAULT_SLOT_STEP_MIN, 720, DEFAULT_SLOT_STEP_MIN);
@@ -1744,15 +2560,35 @@ function buildSlots(params: {
         params.durationMin === undefined
           ? employeeDurationMin
           : clampInt(params.durationMin, DEFAULT_SLOT_STEP_MIN, 720, employeeDurationMin);
-      const rules = (workByEmployee.get(employee.id) || [])
-        .filter((rule) => rule.isActive && rule.weekday === weekday)
-        .sort((a, b) => a.startMinute - b.startMinute);
+      const workdayOverride = workdayOverridesByEmployeeDate.get(`${employee.id}|${dateKey}`);
+      const rules = workdayOverride
+        ? [
+          {
+            startMinute: workdayOverride.startMinute,
+            endMinute: workdayOverride.endMinute,
+          },
+        ]
+        : (workByEmployee.get(employee.id) || [])
+            .filter((rule) => rule.isActive && rule.weekday === weekday)
+            .sort((a, b) => a.startMinute - b.startMinute);
       if (!rules.length) continue;
-      if (blockedByHoliday) continue;
+      if (blockedByHoliday && !hasHolidayWorkOverride && !workdayOverride) continue;
 
-      const breaks = (breakByEmployee.get(employee.id) || []).filter(
-        (rule) => rule.isActive && rule.weekday === weekday,
-      );
+      const breaks: Array<{ startMinute: number; endMinute: number }> = workdayOverride
+        ? workdayOverride.breakStartMinute !== null && workdayOverride.breakEndMinute !== null
+          ? [
+              {
+                startMinute: workdayOverride.breakStartMinute,
+                endMinute: workdayOverride.breakEndMinute,
+              },
+            ]
+          : []
+        : (breakByEmployee.get(employee.id) || [])
+            .filter((rule) => rule.isActive && rule.weekday === weekday)
+            .map((rule) => ({
+              startMinute: rule.startMinute,
+              endMinute: rule.endMinute,
+            }));
       const employeeTimeOff = [...globalTimeOff, ...(timeOffByEmployee.get(employee.id) || [])];
       const employeeAppointments = appointmentsByEmployee.get(employee.id) || [];
 
@@ -1841,6 +2677,8 @@ export async function createBookingEmployee(companyIdRaw: string, payload: Emplo
   const companyId = normalizeCompanyId(companyIdRaw);
   const name = normalizeRequiredText(payload.name, "name");
   const specialty = normalizeOptionalText(payload.specialty);
+  const photoUrl = normalizeOptionalText(payload.photoUrl);
+  const description = normalizeOptionalText(payload.description);
   const color = normalizeOptionalText(payload.color);
   const timezone = DEFAULT_TIMEZONE;
   const compensationType = payload.compensationType ? parseCompensationType(payload.compensationType) : "percent";
@@ -1866,12 +2704,12 @@ export async function createBookingEmployee(companyIdRaw: string, payload: Emplo
     const { rows } = await client.query<EmployeeRow>(
       `
         INSERT INTO calendar.employees (
-          id, company_id, name, specialty, color, timezone, slot_duration_min, is_active, created_at, updated_at
+          id, company_id, name, specialty, photo_url, description, color, timezone, slot_duration_min, is_active, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, NOW(), NOW())
         RETURNING *
       `,
-      [id, companyId, name, specialty, color, timezone, slotDurationMin],
+      [id, companyId, name, specialty, photoUrl, description, color, timezone, slotDurationMin],
     );
 
     for (const weekday of DEFAULT_WORKDAY_WEEKDAYS) {
@@ -1922,6 +2760,9 @@ export async function updateBookingEmployee(companyIdRaw: string, employeeId: st
     const existingCompensation = await loadEmployeeCompensationTx(client, companyId, employeeIdNormalized);
     const name = payload.name !== undefined ? normalizeRequiredText(payload.name, "name") : existing.name;
     const specialty = payload.specialty !== undefined ? normalizeOptionalText(payload.specialty) : existing.specialty;
+    const photoUrl = payload.photoUrl !== undefined ? normalizeOptionalText(payload.photoUrl) : existing.photo_url;
+    const description =
+      payload.description !== undefined ? normalizeOptionalText(payload.description) : existing.description;
     const color = payload.color !== undefined ? normalizeOptionalText(payload.color) : existing.color;
     const slotDurationMin =
       payload.slotDurationMin !== undefined
@@ -1944,14 +2785,16 @@ export async function updateBookingEmployee(companyIdRaw: string, employeeId: st
         SET
           name = $3,
           specialty = $4,
-          color = $5,
-          slot_duration_min = $6,
-          is_active = $7,
+          photo_url = $5,
+          description = $6,
+          color = $7,
+          slot_duration_min = $8,
+          is_active = $9,
           updated_at = NOW()
         WHERE company_id = $1 AND id = $2
         RETURNING *
       `,
-      [companyId, employeeIdNormalized, name, specialty, color, slotDurationMin, isActive],
+      [companyId, employeeIdNormalized, name, specialty, photoUrl, description, color, slotDurationMin, isActive],
     );
 
     const compensation = await upsertEmployeeCompensationTx(client, {
@@ -1962,6 +2805,346 @@ export async function updateBookingEmployee(companyIdRaw: string, employeeId: st
     });
 
     return { employee: mapEmployee(rows[0], compensation) };
+  });
+}
+
+export async function listBookingClients(companyIdRaw: string, params: ClientsListParams = {}) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const search = normalizeOptionalText(params.search);
+  const limit = clampInt(params.limit, 1, 1000, 300);
+
+  return withClient(async (client) => {
+    const { rows } = await client.query<ClientRow>(
+      `
+        SELECT *
+        FROM calendar.clients
+        WHERE company_id = $1
+          AND (
+            $2::text IS NULL
+            OR full_name ILIKE $3
+            OR phone ILIKE $3
+            OR iin ILIKE $3
+          )
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT $4
+      `,
+      [companyId, search, search ? `%${search}%` : null, limit],
+    );
+
+    return { clients: rows.map(mapClient) };
+  });
+}
+
+export async function createBookingClient(companyIdRaw: string, payload: ClientInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const fullName = normalizeRequiredText(payload.fullName, "fullName");
+  const phone = normalizeAppointmentPhone(payload.phone);
+  const iin = normalizeIin(normalizeOptionalText(payload.iin));
+  const birthDate = payload.birthDate ? parseDateOnly(payload.birthDate, "birthDate") : null;
+  const gender = normalizeOptionalText(payload.gender);
+
+  if (iin && !isValidIin(iin)) {
+    throw new BookingServiceError(400, "INVALID_IIN", "Invalid IIN");
+  }
+
+  return withTransaction(async (client) => {
+    const id = randomId();
+    const { rows } = await client.query<ClientRow>(
+      `
+        INSERT INTO calendar.clients (
+          id, company_id, full_name, phone, iin, birth_date, gender, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+        RETURNING *
+      `,
+      [id, companyId, fullName, phone, iin, birthDate, gender],
+    );
+
+    return { client: mapClient(rows[0]) };
+  });
+}
+
+export async function updateBookingClient(companyIdRaw: string, clientId: string, payload: UpdateClientInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const clientIdNormalized = normalizeRequiredText(clientId, "clientId");
+
+  return withTransaction(async (client) => {
+    const existing = await loadClientTx(client, companyId, clientIdNormalized);
+    const fullName = payload.fullName !== undefined ? normalizeRequiredText(payload.fullName, "fullName") : existing.full_name;
+    const phone = payload.phone !== undefined ? normalizeAppointmentPhone(payload.phone) : existing.phone;
+    const iinRaw = payload.iin !== undefined ? normalizeOptionalText(payload.iin) : existing.iin;
+    const iin = normalizeIin(iinRaw);
+    const birthDate =
+      payload.birthDate !== undefined
+        ? payload.birthDate
+          ? parseDateOnly(payload.birthDate, "birthDate")
+          : null
+        : existing.birth_date;
+    const gender = payload.gender !== undefined ? normalizeOptionalText(payload.gender) : existing.gender;
+
+    if (iin && !isValidIin(iin)) {
+      throw new BookingServiceError(400, "INVALID_IIN", "Invalid IIN");
+    }
+
+    const { rows } = await client.query<ClientRow>(
+      `
+        UPDATE calendar.clients
+        SET
+          full_name = $3,
+          phone = $4,
+          iin = $5,
+          birth_date = $6,
+          gender = $7,
+          updated_at = NOW()
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, clientIdNormalized, fullName, phone, iin, birthDate, gender],
+    );
+
+    return { client: mapClient(rows[0]) };
+  });
+}
+
+export async function listBookingServices(companyIdRaw: string, params: ServicesListParams = {}) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  return withClient(async (client) => {
+    const { rows } = await client.query<ServiceRow>(
+      `
+        SELECT *
+        FROM calendar.services
+        WHERE company_id = $1
+          AND ($2::boolean = TRUE OR is_active = TRUE)
+        ORDER BY created_at ASC
+      `,
+      [companyId, parseBool(params.includeInactive, false)],
+    );
+
+    const serviceIds = rows.map((row) => row.id);
+    const priceRows = await loadServicePricesByServiceIdsTx(client, companyId, serviceIds);
+    const pricesByServiceId = new Map<string, ServicePriceRow[]>();
+
+    for (const row of priceRows) {
+      const list = pricesByServiceId.get(row.service_id) || [];
+      list.push(row);
+      pricesByServiceId.set(row.service_id, list);
+    }
+
+    return {
+      services: rows.map((row) => mapService(row, pricesByServiceId.get(row.id) || [])),
+    };
+  });
+}
+
+export async function createBookingService(companyIdRaw: string, payload: ServiceInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const name = normalizeRequiredText(payload.name, "name");
+  const basePrice = clampMoney(payload.basePrice, 0);
+  const rawDurationMin = Number(payload.durationMin);
+  if (
+    payload.durationMin !== undefined &&
+    (!Number.isFinite(rawDurationMin) ||
+      rawDurationMin < DEFAULT_SLOT_STEP_MIN ||
+      rawDurationMin > 720 ||
+      rawDurationMin % DEFAULT_SLOT_STEP_MIN !== 0)
+  ) {
+    throw new BookingServiceError(
+      400,
+      "VALIDATION_ERROR",
+      `Field 'durationMin' must be between ${DEFAULT_SLOT_STEP_MIN} and 720 and multiple of ${DEFAULT_SLOT_STEP_MIN}`,
+    );
+  }
+  const durationMin = clampInt(payload.durationMin, DEFAULT_SLOT_STEP_MIN, 720, DEFAULT_SERVICE_DURATION_MIN);
+  const category = normalizeOptionalText(payload.category);
+  const direction = normalizeOptionalText(payload.direction);
+  const serviceType = normalizeServiceType(payload.serviceType);
+  const description = normalizeOptionalText(payload.description);
+  const isActive = parseBool(payload.isActive, true);
+  const normalizedPrices = normalizeServicePriceInputs(payload.employeePrices);
+
+  if (isActive && basePrice <= 0 && !normalizedPrices.some((item) => item.isActive && item.price > 0)) {
+    throw new BookingServiceError(
+      400,
+      "VALIDATION_ERROR",
+      "Active service must have a base price or at least one active custom employee price greater than 0",
+    );
+  }
+
+  return withTransaction(async (client) => {
+    for (const item of normalizedPrices) {
+      await loadEmployeeTx(client, companyId, item.employeeId);
+    }
+
+    const id = randomId();
+    const { rows } = await client.query<ServiceRow>(
+      `
+        INSERT INTO calendar.services (
+          id, company_id, name, base_price, duration_min, category, direction, service_type, description, is_active, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+        RETURNING *
+      `,
+      [id, companyId, name, basePrice, durationMin, category, direction, serviceType, description, isActive],
+    );
+
+    for (const item of normalizedPrices) {
+      await client.query(
+        `
+          INSERT INTO calendar.service_prices (
+            id, company_id, service_id, employee_id, price, compensation_type, compensation_value, is_active, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+        `,
+        [
+          randomId(),
+          companyId,
+          id,
+          item.employeeId,
+          item.price,
+          item.compensationType,
+          item.compensationValue,
+          item.isActive,
+        ],
+      );
+    }
+
+    const priceRows = await loadServicePricesByServiceIdsTx(client, companyId, [id]);
+    return { service: mapService(rows[0], priceRows) };
+  });
+}
+
+export async function updateBookingService(companyIdRaw: string, serviceId: string, payload: UpdateServiceInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const serviceIdNormalized = normalizeRequiredText(serviceId, "serviceId");
+
+  return withTransaction(async (client) => {
+    const existing = await loadServiceTx(client, companyId, serviceIdNormalized);
+    const existingPriceRows = await loadServicePricesByServiceIdsTx(client, companyId, [serviceIdNormalized]);
+    const normalizedPrices = payload.employeePrices ? normalizeServicePriceInputs(payload.employeePrices) : [];
+
+    for (const item of normalizedPrices) {
+      await loadEmployeeTx(client, companyId, item.employeeId);
+    }
+
+    const name = payload.name !== undefined ? normalizeRequiredText(payload.name, "name") : existing.name;
+    const basePrice =
+      payload.basePrice !== undefined ? clampMoney(payload.basePrice, 0) : clampMoney(existing.base_price, 0);
+    const rawDurationMin = Number(payload.durationMin);
+    if (
+      payload.durationMin !== undefined &&
+      (!Number.isFinite(rawDurationMin) ||
+        rawDurationMin < DEFAULT_SLOT_STEP_MIN ||
+        rawDurationMin > 720 ||
+        rawDurationMin % DEFAULT_SLOT_STEP_MIN !== 0)
+    ) {
+      throw new BookingServiceError(
+        400,
+        "VALIDATION_ERROR",
+        `Field 'durationMin' must be between ${DEFAULT_SLOT_STEP_MIN} and 720 and multiple of ${DEFAULT_SLOT_STEP_MIN}`,
+      );
+    }
+    const durationMin =
+      payload.durationMin !== undefined
+        ? clampInt(payload.durationMin, DEFAULT_SLOT_STEP_MIN, 720, existing.duration_min || DEFAULT_SERVICE_DURATION_MIN)
+        : existing.duration_min;
+    const category = payload.category !== undefined ? normalizeOptionalText(payload.category) : existing.category;
+    const direction = payload.direction !== undefined ? normalizeOptionalText(payload.direction) : existing.direction;
+    const serviceType =
+      payload.serviceType !== undefined
+        ? normalizeServiceType(payload.serviceType)
+        : normalizeServiceType(existing.service_type, "primary");
+    const description =
+      payload.description !== undefined ? normalizeOptionalText(payload.description) : existing.description;
+    const isActive = payload.isActive !== undefined ? parseBool(payload.isActive, existing.is_active) : existing.is_active;
+
+    const finalPricesByEmployeeId = new Map<
+      string,
+      { price: number; compensationType: BookingCompensationType; compensationValue: number; isActive: boolean }
+    >();
+    for (const row of existingPriceRows) {
+      finalPricesByEmployeeId.set(row.employee_id, {
+        price: row.price,
+        compensationType: parseCompensationType(row.compensation_type || "percent"),
+        compensationValue: row.compensation_value ?? 0,
+        isActive: row.is_active,
+      });
+    }
+    for (const item of normalizedPrices) {
+      finalPricesByEmployeeId.set(item.employeeId, {
+        price: item.price,
+        compensationType: item.compensationType,
+        compensationValue: item.compensationValue,
+        isActive: item.isActive,
+      });
+    }
+
+    if (
+      isActive &&
+      basePrice <= 0 &&
+      !Array.from(finalPricesByEmployeeId.values()).some((item) => item.isActive && item.price > 0)
+    ) {
+      throw new BookingServiceError(
+        400,
+        "VALIDATION_ERROR",
+        "Active service must have a base price or at least one active custom employee price greater than 0",
+      );
+    }
+
+    const { rows } = await client.query<ServiceRow>(
+      `
+        UPDATE calendar.services
+        SET
+          name = $3,
+          base_price = $4,
+          duration_min = $5,
+          category = $6,
+          direction = $7,
+          service_type = $8,
+          description = $9,
+          is_active = $10,
+          updated_at = NOW()
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, serviceIdNormalized, name, basePrice, durationMin, category, direction, serviceType, description, isActive],
+    );
+
+    for (const item of normalizedPrices) {
+      await client.query(
+        `
+          INSERT INTO calendar.service_prices (
+            id, company_id, service_id, employee_id, price, compensation_type, compensation_value, is_active, created_at, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+          ON CONFLICT (service_id, employee_id)
+          DO UPDATE SET
+            price = EXCLUDED.price,
+            compensation_type = EXCLUDED.compensation_type,
+            compensation_value = EXCLUDED.compensation_value,
+            is_active = EXCLUDED.is_active,
+            updated_at = NOW()
+        `,
+        [
+          randomId(),
+          companyId,
+          serviceIdNormalized,
+          item.employeeId,
+          item.price,
+          item.compensationType,
+          item.compensationValue,
+          item.isActive,
+        ],
+      );
+    }
+
+    const priceRows = await loadServicePricesByServiceIdsTx(client, companyId, [serviceIdNormalized]);
+    return { service: mapService(rows[0], priceRows) };
   });
 }
 
@@ -2120,6 +3303,7 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
         workRules: [],
         breakRules: [],
         holidays: [],
+        workdayOverrides: [],
         timeOff: [],
         appointments: [],
         payments: [],
@@ -2164,6 +3348,19 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
         ORDER BY date ASC
       `,
       [companyId, startDateKey, endDateKey],
+    );
+
+    const { rows: workdayOverrideRows } = await client.query<WorkdayOverrideRow>(
+      `
+        SELECT *
+        FROM calendar.workday_overrides
+        WHERE company_id = $1
+          AND employee_id = ANY($2::text[])
+          AND date >= $3::date
+          AND date <= $4::date
+        ORDER BY date ASC, start_minute ASC, created_at ASC
+      `,
+      [companyId, targetEmployeeIds, startDateKey, endDateKey],
     );
 
     const { rows: timeOffRows } = await client.query<TimeOffRow>(
@@ -2229,6 +3426,7 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
     const workRules = workRuleRows.map(mapWorkRule);
     const breakRules = breakRuleRows.map(mapBreakRule);
     const holidays = holidayRows.map(mapHoliday);
+    const workdayOverrides = workdayOverrideRows.map(mapWorkdayOverride);
     const timeOff = timeOffRows.map(mapTimeOff);
     const appointments = appointmentRows.map((row) => mapAppointment(row, financeByAppointmentId.get(row.id) || null));
     const payments = paymentRows.map(mapPayment);
@@ -2241,6 +3439,7 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
           workRules,
           breakRules,
           holidays,
+          workdayOverrides,
           timeOff,
           appointments,
           durationMin,
@@ -2254,6 +3453,7 @@ export async function fetchBookingCalendarView(companyIdRaw: string, params: Cal
       workRules,
       breakRules,
       holidays,
+      workdayOverrides,
       timeOff,
       appointments,
       payments,
@@ -2267,30 +3467,48 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
   await ensureBookingSchema();
   const companyId = normalizeCompanyId(companyIdRaw);
   const employeeId = normalizeRequiredText(payload.employeeId, "employeeId");
+  const clientId = normalizeOptionalText(payload.clientId);
+  const serviceId = normalizeOptionalText(payload.serviceId);
   const startsAt = parseIsoDateTime(payload.startsAt, "startsAt");
   const endsAt = parseIsoDateTime(payload.endsAt, "endsAt");
+  const appointmentType = parseAppointmentType(payload.appointmentType);
   const clientName = normalizeRequiredText(payload.clientName, "clientName");
-  const clientPhone = normalizeOptionalText(payload.clientPhone);
+  const clientPhone = normalizeAppointmentPhone(payload.clientPhone);
   const clientIin = normalizeIin(normalizeOptionalText(payload.clientIin));
+  const clientBirthDate =
+    payload.clientBirthDate !== undefined
+      ? payload.clientBirthDate
+        ? parseDateOnly(payload.clientBirthDate, "clientBirthDate")
+        : null
+      : null;
+  const clientGender = normalizeOptionalText(payload.clientGender);
   const clientComment = normalizeOptionalText(payload.clientComment);
   const source = normalizeOptionalText(payload.source) || "manual";
   const externalRef = normalizeOptionalText(payload.externalRef);
   const idempotencyKey = normalizeOptionalText(payload.idempotencyKey);
   const createdByUserId = normalizeOptionalText(payload.createdByUserId);
-  const serviceAmount = clampMoney(payload.serviceAmount, 0);
+  let serviceAmount = clampMoney(payload.serviceAmount, 0);
   const prepaidAmount = clampMoney(payload.prepaidAmount, 0);
   const prepaidPaymentMethod = parsePaymentMethod(payload.prepaidPaymentMethod, "prepaidPaymentMethod");
   const settlementAmount = clampMoney(payload.settlementAmount, 0);
   const settlementPaymentMethod = parsePaymentMethod(payload.settlementPaymentMethod, "settlementPaymentMethod");
   const requestedPaymentStatus = payload.paymentStatus ? parsePaymentStatus(payload.paymentStatus) : null;
   const durationMin = clampInt(payload.durationMin, 5, 720, Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000));
-  const paymentStatus = derivePaymentStatus(serviceAmount, prepaidAmount, settlementAmount, requestedPaymentStatus);
+  let paymentStatus = derivePaymentStatus(serviceAmount, prepaidAmount, settlementAmount, requestedPaymentStatus);
+  let serviceNameSnapshot: string | null = null;
+  let serviceTypeSnapshot: BookingAppointmentType | string | null = null;
+  let serviceDurationMinSnapshot: number | null = null;
+  let compensationTypeSnapshot: BookingCompensationType | string | null = null;
+  let compensationValueSnapshot: number | null = null;
 
   if (clientIin && !isValidIin(clientIin)) {
     throw new BookingServiceError(400, "INVALID_IIN", "Invalid IIN");
   }
   if (endsAt <= startsAt) {
     throw new BookingServiceError(400, "VALIDATION_ERROR", "End date must be greater than start date");
+  }
+  if (serviceAmount <= 0 && !serviceId) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "serviceAmount is required and must be greater than 0");
   }
   if (prepaidAmount > 0 && !prepaidPaymentMethod) {
     throw new BookingServiceError(400, "VALIDATION_ERROR", "prepaidPaymentMethod is required when prepaidAmount is greater than 0");
@@ -2307,6 +3525,10 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
   }
 
   return withTransaction(async (client) => {
+    if (clientId) {
+      await loadClientTx(client, companyId, clientId);
+    }
+
     if (idempotencyKey) {
       const { rows: existingByIdempotency } = await client.query<AppointmentRow>(
         `
@@ -2340,6 +3562,28 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
       }
     }
 
+    const appointmentConfigSnapshot = await resolveAppointmentConfigSnapshotTx(client, {
+      companyId,
+      employeeId,
+      serviceId,
+    });
+    serviceNameSnapshot = appointmentConfigSnapshot.serviceNameSnapshot;
+    serviceTypeSnapshot = appointmentConfigSnapshot.serviceTypeSnapshot;
+    serviceDurationMinSnapshot = appointmentConfigSnapshot.serviceDurationMinSnapshot;
+    compensationTypeSnapshot = appointmentConfigSnapshot.compensationTypeSnapshot;
+    compensationValueSnapshot = appointmentConfigSnapshot.compensationValueSnapshot;
+
+    if (serviceId && payload.serviceAmount === undefined && appointmentConfigSnapshot.resolvedServicePrice !== null) {
+      serviceAmount = appointmentConfigSnapshot.resolvedServicePrice;
+    }
+    if (serviceAmount <= 0) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "serviceAmount is required and must be greater than 0");
+    }
+    if (prepaidAmount + settlementAmount > serviceAmount) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "Total received amount cannot exceed serviceAmount");
+    }
+    paymentStatus = derivePaymentStatus(serviceAmount, prepaidAmount, settlementAmount, requestedPaymentStatus);
+
     await assertAppointmentPoliciesTx(client, {
       companyId,
       employeeId,
@@ -2354,13 +3598,21 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
           id,
           company_id,
           employee_id,
+          client_id,
+          service_id,
+          service_name_snapshot,
+          service_type_snapshot,
+          service_duration_min_snapshot,
           starts_at,
           ends_at,
           duration_min,
           status,
+          appointment_type,
           client_name,
           client_phone,
           client_iin,
+          client_birth_date,
+          client_gender,
           client_comment,
           source,
           external_ref,
@@ -2370,7 +3622,7 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
           updated_at
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6, 'scheduled', $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW()
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'scheduled', $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW(), NOW()
         )
         RETURNING *
       `,
@@ -2378,12 +3630,20 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
         id,
         companyId,
         employeeId,
+        clientId,
+        serviceId,
+        serviceNameSnapshot,
+        serviceTypeSnapshot,
+        serviceDurationMinSnapshot,
         startsAt.toISOString(),
         endsAt.toISOString(),
         durationMin,
+        appointmentType,
         clientName,
         clientPhone,
         clientIin,
+        clientBirthDate,
+        clientGender,
         clientComment,
         source,
         externalRef,
@@ -2396,6 +3656,8 @@ export async function createBookingAppointment(companyIdRaw: string, payload: Cr
       companyId,
       appointmentId: id,
       serviceAmount,
+      compensationTypeSnapshot,
+      compensationValueSnapshot,
       prepaidAmount,
       prepaidPaymentMethod,
       settlementAmount,
@@ -2442,6 +3704,9 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
     const existingFinance = await loadAppointmentFinanceTx(client, companyId, id);
 
     const employeeId = normalizeOptionalText(payload.employeeId) || existing.employee_id;
+    const clientId = payload.clientId !== undefined ? normalizeOptionalText(payload.clientId) : existing.client_id;
+    const serviceId = payload.serviceId !== undefined ? normalizeOptionalText(payload.serviceId) : existing.service_id;
+    const pricingLinkChanged = payload.serviceId !== undefined || payload.employeeId !== undefined;
     const startsAt = payload.startsAt ? parseIsoDateTime(payload.startsAt, "startsAt") : new Date(existing.starts_at);
     const endsAt = payload.endsAt ? parseIsoDateTime(payload.endsAt, "endsAt") : new Date(existing.ends_at);
     const durationMin = clampInt(
@@ -2451,8 +3716,13 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
       Math.max(5, Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000)),
     );
     const status = payload.status ? parseStatus(payload.status) : (existing.status as BookingStatus);
+    const appointmentType =
+      payload.appointmentType !== undefined
+        ? parseAppointmentType(payload.appointmentType)
+        : parseAppointmentType(existing.appointment_type);
     const clientName = payload.clientName ? normalizeRequiredText(payload.clientName, "clientName") : existing.client_name;
-    const clientPhone = payload.clientPhone !== undefined ? normalizeOptionalText(payload.clientPhone) : existing.client_phone;
+    const clientPhone =
+      payload.clientPhone !== undefined ? normalizeAppointmentPhone(payload.clientPhone) : existing.client_phone;
     const clientIinRaw =
       payload.clientIin !== undefined ? normalizeOptionalText(payload.clientIin) : existing.client_iin;
     const clientIin = normalizeIin(clientIinRaw);
@@ -2465,7 +3735,7 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
       payload.idempotencyKey !== undefined ? normalizeOptionalText(payload.idempotencyKey) : existing.idempotency_key;
     const createdByUserId =
       payload.createdByUserId !== undefined ? normalizeOptionalText(payload.createdByUserId) : existing.created_by_user_id;
-    const serviceAmount =
+    let serviceAmount =
       payload.serviceAmount !== undefined ? clampMoney(payload.serviceAmount) : existingFinance?.service_amount ?? 0;
     const prepaidAmount =
       payload.prepaidAmount !== undefined ? clampMoney(payload.prepaidAmount) : existingFinance?.prepaid_amount ?? 0;
@@ -2483,7 +3753,7 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
       payload.paymentStatus !== undefined
         ? parsePaymentStatus(payload.paymentStatus)
         : ((existingFinance?.payment_status as BookingPaymentStatus | string | undefined) || null);
-    const paymentStatus = derivePaymentStatus(
+    let paymentStatus = derivePaymentStatus(
       serviceAmount,
       prepaidAmount,
       settlementAmount,
@@ -2491,6 +3761,14 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
         ? (requestedPaymentStatus as BookingPaymentStatus)
         : null,
     );
+    let serviceNameSnapshot =
+      payload.serviceId !== undefined && !serviceId ? null : existing.service_name_snapshot;
+    let serviceTypeSnapshot =
+      payload.serviceId !== undefined && !serviceId ? null : existing.service_type_snapshot;
+    let serviceDurationMinSnapshot =
+      payload.serviceId !== undefined && !serviceId ? null : existing.service_duration_min_snapshot;
+    let compensationTypeSnapshot = existingFinance?.compensation_type_snapshot ?? null;
+    let compensationValueSnapshot = existingFinance?.compensation_value_snapshot ?? null;
     const clientBirthDate =
       payload.clientBirthDate !== undefined
         ? payload.clientBirthDate
@@ -2500,11 +3778,50 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
     const clientGender =
       payload.clientGender !== undefined ? normalizeOptionalText(payload.clientGender) : existing.client_gender;
 
+    let appointmentConfigSnapshot:
+      | Awaited<ReturnType<typeof resolveAppointmentConfigSnapshotTx>>
+      | null = null;
+
+    if (pricingLinkChanged) {
+      appointmentConfigSnapshot = await resolveAppointmentConfigSnapshotTx(client, {
+        companyId,
+        employeeId,
+        serviceId,
+      });
+
+      if (serviceId && payload.serviceAmount === undefined && appointmentConfigSnapshot.resolvedServicePrice !== null) {
+        serviceAmount = appointmentConfigSnapshot.resolvedServicePrice;
+      }
+
+      compensationTypeSnapshot = appointmentConfigSnapshot.compensationTypeSnapshot;
+      compensationValueSnapshot = appointmentConfigSnapshot.compensationValueSnapshot;
+
+      if (payload.serviceId !== undefined) {
+        serviceNameSnapshot = appointmentConfigSnapshot.serviceNameSnapshot;
+        serviceTypeSnapshot = appointmentConfigSnapshot.serviceTypeSnapshot;
+        serviceDurationMinSnapshot = appointmentConfigSnapshot.serviceDurationMinSnapshot;
+      }
+    }
+    paymentStatus = derivePaymentStatus(
+      serviceAmount,
+      prepaidAmount,
+      settlementAmount,
+      requestedPaymentStatus && BOOKING_PAYMENT_STATUSES.includes(requestedPaymentStatus as BookingPaymentStatus)
+        ? (requestedPaymentStatus as BookingPaymentStatus)
+        : null,
+    );
+
     if (endsAt <= startsAt) {
       throw new BookingServiceError(400, "VALIDATION_ERROR", "End date must be greater than start date");
     }
+    if (clientId) {
+      await loadClientTx(client, companyId, clientId);
+    }
     if (clientIin && !isValidIin(clientIin)) {
       throw new BookingServiceError(400, "INVALID_IIN", "Invalid IIN");
+    }
+    if (payload.serviceAmount !== undefined && serviceAmount <= 0) {
+      throw new BookingServiceError(400, "VALIDATION_ERROR", "serviceAmount is required and must be greater than 0");
     }
     if (prepaidAmount > 0 && !prepaidPaymentMethod) {
       throw new BookingServiceError(400, "VALIDATION_ERROR", "prepaidPaymentMethod is required when prepaidAmount is greater than 0");
@@ -2569,20 +3886,26 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
         UPDATE calendar.appointments
         SET
           employee_id = $3,
-          starts_at = $4,
-          ends_at = $5,
-          duration_min = $6,
-          status = $7,
-          client_name = $8,
-          client_phone = $9,
-          client_iin = $10,
-          client_birth_date = $11,
-          client_gender = $12,
-          client_comment = $13,
-          source = $14,
-          external_ref = $15,
-          idempotency_key = $16,
-          created_by_user_id = $17,
+          client_id = $4,
+          service_id = $5,
+          service_name_snapshot = $6,
+          service_type_snapshot = $7,
+          service_duration_min_snapshot = $8,
+          starts_at = $9,
+          ends_at = $10,
+          duration_min = $11,
+          status = $12,
+          appointment_type = $13,
+          client_name = $14,
+          client_phone = $15,
+          client_iin = $16,
+          client_birth_date = $17,
+          client_gender = $18,
+          client_comment = $19,
+          source = $20,
+          external_ref = $21,
+          idempotency_key = $22,
+          created_by_user_id = $23,
           updated_at = NOW()
         WHERE company_id = $1 AND id = $2
         RETURNING *
@@ -2591,10 +3914,16 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
         companyId,
         id,
         employeeId,
+        clientId,
+        serviceId,
+        serviceNameSnapshot,
+        serviceTypeSnapshot,
+        serviceDurationMinSnapshot,
         startsAt.toISOString(),
         endsAt.toISOString(),
         durationMin,
         status,
+        appointmentType,
         clientName,
         clientPhone,
         clientIin,
@@ -2612,6 +3941,8 @@ export async function updateBookingAppointment(companyIdRaw: string, appointment
       companyId,
       appointmentId: id,
       serviceAmount,
+      compensationTypeSnapshot,
+      compensationValueSnapshot,
       prepaidAmount,
       prepaidPaymentMethod,
       settlementAmount,
@@ -2659,6 +3990,8 @@ export async function cancelBookingAppointment(companyIdRaw: string, appointment
       companyId,
       appointmentId: id,
       serviceAmount: existingFinance?.service_amount ?? 0,
+      compensationTypeSnapshot: existingFinance?.compensation_type_snapshot ?? null,
+      compensationValueSnapshot: existingFinance?.compensation_value_snapshot ?? null,
       prepaidAmount: existingFinance?.prepaid_amount ?? 0,
       prepaidPaymentMethod: existingFinance?.prepaid_payment_method ?? null,
       settlementAmount: existingFinance?.settlement_amount ?? 0,
@@ -2724,10 +4057,25 @@ export async function addBookingAppointmentPayment(
       throw new BookingServiceError(400, "VALIDATION_ERROR", "Payment amount exceeds remaining balance");
     }
 
+    let compensationTypeSnapshot = existingFinance?.compensation_type_snapshot ?? null;
+    let compensationValueSnapshot = existingFinance?.compensation_value_snapshot ?? null;
+    if (compensationTypeSnapshot === null || compensationValueSnapshot === null) {
+      const snapshot = await resolveAppointmentConfigSnapshotTx(client, {
+        companyId,
+        employeeId: appointment.employee_id,
+        serviceId: appointment.service_id,
+        validateServiceAvailability: false,
+      });
+      compensationTypeSnapshot = snapshot.compensationTypeSnapshot;
+      compensationValueSnapshot = snapshot.compensationValueSnapshot;
+    }
+
     const finance = await upsertAppointmentFinanceTx(client, {
       companyId,
       appointmentId: id,
       serviceAmount,
+      compensationTypeSnapshot,
+      compensationValueSnapshot,
       prepaidAmount,
       prepaidPaymentMethod: existingFinance?.prepaid_payment_method ?? null,
       settlementAmount: settlementAmount + amount,
@@ -2801,6 +4149,8 @@ export async function cancelBookingAppointmentPayment(companyIdRaw: string, appo
       companyId,
       appointmentId: id,
       serviceAmount: existingFinance?.service_amount ?? 0,
+      compensationTypeSnapshot: existingFinance?.compensation_type_snapshot ?? null,
+      compensationValueSnapshot: existingFinance?.compensation_value_snapshot ?? null,
       prepaidAmount: 0,
       prepaidPaymentMethod: null,
       settlementAmount: 0,
@@ -3021,6 +4371,145 @@ export async function deleteBookingHoliday(companyIdRaw: string, holidayId: stri
       throw new BookingServiceError(404, "HOLIDAY_NOT_FOUND", "Holiday not found");
     }
     return { holiday: mapHoliday(rows[0]) };
+  });
+}
+
+export async function listBookingWorkdayOverrides(companyIdRaw: string, params: WorkdayOverridesListParams = {}) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const employeeId = normalizeOptionalText(params.employeeId);
+  const fromDate = params.from ? parseDateOnly(params.from, "from") : null;
+  const toDate = params.to ? parseDateOnly(params.to, "to") : null;
+  const limit = clampInt(params.limit, 1, 500, 60);
+
+  if (fromDate && toDate && toDate < fromDate) {
+    throw new BookingServiceError(400, "VALIDATION_ERROR", "Field 'to' must be greater than or equal to 'from'");
+  }
+
+  return withClient(async (client) => {
+    if (employeeId) {
+      await loadEmployeeTx(client, companyId, employeeId);
+    }
+
+    const { rows } = await client.query<WorkdayOverrideRow>(
+      `
+        SELECT *
+        FROM calendar.workday_overrides
+        WHERE company_id = $1
+          AND ($2::text IS NULL OR employee_id = $2)
+          AND ($3::date IS NULL OR date >= $3::date)
+          AND ($4::date IS NULL OR date <= $4::date)
+        ORDER BY date ASC, start_minute ASC, created_at ASC
+        LIMIT $5
+      `,
+      [companyId, employeeId, fromDate, toDate, limit],
+    );
+
+    return { workdayOverrides: rows.map(mapWorkdayOverride) };
+  });
+}
+
+export async function createBookingWorkdayOverride(companyIdRaw: string, payload: CreateWorkdayOverrideInput) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const employeeId = normalizeRequiredText(payload.employeeId, "employeeId");
+  const date = parseDateOnly(payload.date, "date");
+  const { startMinute, endMinute } = normalizeWorkdayOverrideRangeInput(payload.startMinute, payload.endMinute);
+  const { breakStartMinute, breakEndMinute, breakTitle } = normalizeWorkdayOverrideBreakInput({
+    breakStartMinuteRaw: payload.breakStartMinute,
+    breakEndMinuteRaw: payload.breakEndMinute,
+    breakTitleRaw: payload.breakTitle,
+    startMinute,
+    endMinute,
+  });
+
+  return withTransaction(async (client) => {
+    await loadEmployeeTx(client, companyId, employeeId);
+
+    const { rows } = await client.query<WorkdayOverrideRow>(
+      `
+        INSERT INTO calendar.workday_overrides (
+          id, company_id, employee_id, date, start_minute, end_minute, break_start_minute, break_end_minute, break_title, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, NOW(), NOW())
+        RETURNING *
+      `,
+      [randomId(), companyId, employeeId, date, startMinute, endMinute, breakStartMinute, breakEndMinute, breakTitle],
+    );
+
+    return { workdayOverride: mapWorkdayOverride(rows[0]) };
+  });
+}
+
+export async function updateBookingWorkdayOverride(
+  companyIdRaw: string,
+  workdayOverrideId: string,
+  payload: UpdateWorkdayOverrideInput,
+) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(workdayOverrideId, "workdayOverrideId");
+
+  return withTransaction(async (client) => {
+    const existing = await loadWorkdayOverrideTx(client, companyId, id);
+    const employeeId =
+      payload.employeeId !== undefined ? normalizeRequiredText(payload.employeeId, "employeeId") : existing.employee_id;
+    const date = payload.date !== undefined ? parseDateOnly(payload.date, "date") : normalizeDateOnly(existing.date);
+    const { startMinute, endMinute } = normalizeWorkdayOverrideRangeInput(
+      payload.startMinute !== undefined ? payload.startMinute : existing.start_minute,
+      payload.endMinute !== undefined ? payload.endMinute : existing.end_minute,
+    );
+    const { breakStartMinute, breakEndMinute, breakTitle } = normalizeWorkdayOverrideBreakInput({
+      breakStartMinuteRaw:
+        payload.breakStartMinute !== undefined ? payload.breakStartMinute : existing.break_start_minute,
+      breakEndMinuteRaw: payload.breakEndMinute !== undefined ? payload.breakEndMinute : existing.break_end_minute,
+      breakTitleRaw: payload.breakTitle !== undefined ? payload.breakTitle : existing.break_title,
+      startMinute,
+      endMinute,
+    });
+
+    await loadEmployeeTx(client, companyId, employeeId);
+
+    const { rows } = await client.query<WorkdayOverrideRow>(
+      `
+        UPDATE calendar.workday_overrides
+        SET
+          employee_id = $3,
+          date = $4::date,
+          start_minute = $5,
+          end_minute = $6,
+          break_start_minute = $7,
+          break_end_minute = $8,
+          break_title = $9,
+          updated_at = NOW()
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id, employeeId, date, startMinute, endMinute, breakStartMinute, breakEndMinute, breakTitle],
+    );
+
+    return { workdayOverride: mapWorkdayOverride(rows[0]) };
+  });
+}
+
+export async function deleteBookingWorkdayOverride(companyIdRaw: string, workdayOverrideId: string) {
+  await ensureBookingSchema();
+  const companyId = normalizeCompanyId(companyIdRaw);
+  const id = normalizeRequiredText(workdayOverrideId, "workdayOverrideId");
+
+  return withClient(async (client) => {
+    const { rows } = await client.query<WorkdayOverrideRow>(
+      `
+        DELETE FROM calendar.workday_overrides
+        WHERE company_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [companyId, id],
+    );
+    if (!rows.length) {
+      throw new BookingServiceError(404, "WORKDAY_OVERRIDE_NOT_FOUND", "Workday override not found");
+    }
+    return { workdayOverride: mapWorkdayOverride(rows[0]) };
   });
 }
 

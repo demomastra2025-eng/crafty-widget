@@ -9,6 +9,7 @@ import type {
   BookingEmployee,
   BookingHoliday,
   BookingSlot,
+  BookingWorkdayOverride,
   BookingWorkRule,
   BookingTimeOff,
 } from "@/lib/booking-api";
@@ -20,6 +21,7 @@ export type AppointmentCalendarIndexes = {
   slotMap: Map<string, Pick<BookingSlot, "employeeId" | "startsAt" | "endsAt">>;
   workRulesByEmployee: RuleGroup;
   breakRulesByEmployee: RuleGroup;
+  workdayOverrideByEmployeeDateKey: Map<string, BookingWorkdayOverride>;
   monthStats: Map<string, MonthStat>;
   holidaysByDateKey: Map<string, BookingHoliday[]>;
   blockedHolidaysByDateKey: Map<string, BookingHoliday[]>;
@@ -60,6 +62,10 @@ function dayMinuteKey(dateKey: string, minuteOfDay: number) {
 
 function employeeCellKey(employeeId: string, dateKey: string, minuteOfDay: number) {
   return `${employeeId}|${dateKey}|${minuteOfDay}`;
+}
+
+function workdayOverrideKey(employeeId: string, dateKey: string) {
+  return `${employeeId}|${dateKey}`;
 }
 
 function pushMapArray<T>(map: Map<string, T[]>, key: string, value: T) {
@@ -124,6 +130,7 @@ export function useAppointmentsCalendarIndexes(params: {
     >();
     const workRulesByEmployee = groupRulesByEmployee(params.calendarData?.workRules || []);
     const breakRulesByEmployee = groupRulesByEmployee(params.calendarData?.breakRules || []);
+    const workdayOverrideByEmployeeDateKey = new Map<string, BookingWorkdayOverride>();
 
     const holidaysByDateKey = new Map<string, BookingHoliday[]>();
     const blockedHolidaysByDateKey = new Map<string, BookingHoliday[]>();
@@ -145,6 +152,10 @@ export function useAppointmentsCalendarIndexes(params: {
 
     for (const day of params.monthDays) {
       monthStats.set(toDateKeyLocal(day), { appointments: 0, availableSlots: 0, holidays: 0, timeOff: 0 });
+    }
+
+    for (const item of params.calendarData?.workdayOverrides || []) {
+      workdayOverrideByEmployeeDateKey.set(workdayOverrideKey(item.employeeId, item.date), item);
     }
 
     for (const slot of params.calendarData?.slots || []) {
@@ -280,6 +291,7 @@ export function useAppointmentsCalendarIndexes(params: {
       slotMap,
       workRulesByEmployee,
       breakRulesByEmployee,
+      workdayOverrideByEmployeeDateKey,
       monthStats,
       holidaysByDateKey,
       blockedHolidaysByDateKey,

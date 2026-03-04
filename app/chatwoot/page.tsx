@@ -123,7 +123,14 @@ export default function ChatwootDashboardPage() {
     );
   }
   if (!loaded) {
-    return <div className="p-4 text-muted-foreground w-full h-screen flex items-center justify-center">Загрузка данных виджета...</div>;
+    return (
+      <div className="flex h-screen w-full items-center justify-center p-4">
+        <div
+          className="border-primary/20 border-t-primary size-8 animate-spin rounded-full border-2"
+          aria-hidden="true"
+        />
+      </div>
+    );
   }
   if (!hasAccountContext) {
     return (

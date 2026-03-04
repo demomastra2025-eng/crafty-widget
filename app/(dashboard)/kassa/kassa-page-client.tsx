@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { addDays, startOfDay } from "date-fns";
 import { ru } from "date-fns/locale";
 import {
@@ -49,6 +49,7 @@ import {
   payAllBookingExpenses,
 } from "@/lib/booking-api";
 import { cn } from "@/lib/utils";
+import { useKassaDerivedData } from "./hooks/use-kassa-derived-data";
 
 type KassaPageClientProps = {
   requestContext?: BookingRequestContext;
@@ -117,6 +118,18 @@ function formatDateTime(iso?: string | null) {
     day: "2-digit",
     month: "2-digit",
   });
+}
+
+function formatPhone(value?: string | null) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return null;
+  const local =
+    digits.length > 11 && digits.startsWith("7")
+      ? digits.slice(1, 12)
+      : digits.length === 10
+        ? `7${digits}`
+        : digits.slice(0, 11);
+  return local ? `+7 ${local}` : null;
 }
 
 function getReceivedAmount(appointment: BookingAppointment) {
@@ -223,10 +236,10 @@ function AppointmentIncomeCard({
             </div>
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span className="truncate">{appointment.clientName || "Без имени"}</span>
-              {appointment.clientPhone ? (
+              {formatPhone(appointment.clientPhone) ? (
                 <>
                   <span className="text-[10px]">·</span>
-                  <span className="truncate">{appointment.clientPhone}</span>
+                  <span className="truncate">{formatPhone(appointment.clientPhone)}</span>
                 </>
               ) : null}
             </div>
@@ -317,6 +330,7 @@ export default function KassaPageClient({
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [paymentDialogAppointmentId, setPaymentDialogAppointmentId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState(0);
+  const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("kaspi_transfer");
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [expenseBulkTarget, setExpenseBulkTarget] = useState<"all" | string | null>(null);
@@ -362,29 +376,6 @@ export default function KassaPageClient({
     };
   }, [anchorDate, refreshTick, requestContext?.agentId, requestContext?.companyId, toast]);
 
-  const appointments = useMemo(
-    () => sortAppointmentsByTime(calendarData?.appointments || []),
-    [calendarData?.appointments],
-  );
-
-  const expenses = useMemo(
-    () =>
-      [...(calendarData?.expenses || [])].sort((left, right) => {
-        const leftAppointment = appointments.find((item) => item.id === left.appointmentId);
-        const rightAppointment = appointments.find((item) => item.id === right.appointmentId);
-        return (
-          new Date(leftAppointment?.startsAt || 0).getTime() -
-          new Date(rightAppointment?.startsAt || 0).getTime()
-        );
-      }),
-    [calendarData?.expenses, appointments],
-  );
-
-  const employeesById = useMemo(
-    () => new Map((calendarData?.employees || []).map((employee) => [employee.id, employee] as const)),
-    [calendarData?.employees],
-  );
-
   useEffect(() => {
     const employeeIds = (calendarData?.employees || []).map((employee) => employee.id);
     if (!employeeIds.length) {
@@ -399,146 +390,32 @@ export default function KassaPageClient({
       return employeeIds;
     });
   }, [calendarData?.employees]);
-
-  const appointmentsById = useMemo(
-    () => new Map(appointments.map((appointment) => [appointment.id, appointment] as const)),
-    [appointments],
-  );
-
-  const paymentsByAppointmentId = useMemo(() => {
-    const map = new Map<string, BookingPayment[]>();
-    for (const payment of calendarData?.payments || []) {
-      const list = map.get(payment.appointmentId) || [];
-      list.push(payment);
-      map.set(payment.appointmentId, list);
-    }
-    return map;
-  }, [calendarData?.payments]);
-
-  const selectedEmployeeIdSet = useMemo(() => new Set(selectedEmployeeIds), [selectedEmployeeIds]);
-
-  const filteredAppointments = useMemo(
-    () =>
-      appointments.filter((appointment) => {
-        const matchesEmployee =
-          selectedEmployeeIdSet.size === 0 || selectedEmployeeIdSet.has(appointment.employeeId);
-        if (!matchesEmployee) return false;
-
-        if (!showPaidAppointments && appointment.paymentStatus === "paid") return false;
-
-        if (paymentStatusFilter === "all") return true;
-        if (appointment.paymentStatus !== paymentStatusFilter) return false;
-        return true;
-      }),
-    [appointments, paymentStatusFilter, selectedEmployeeIdSet, showPaidAppointments],
-  );
-
-  const searchedAppointments = useMemo(
-    () =>
-      filteredAppointments.filter((appointment) => {
-        if (paymentMethodFilter === "all") return true;
-        return (paymentsByAppointmentId.get(appointment.id) || []).some(
-          (payment) => payment.paymentMethod === paymentMethodFilter,
-        );
-      }),
-    [filteredAppointments, paymentMethodFilter, paymentsByAppointmentId],
-  );
-
-  const filteredExpenses = useMemo(
-    () =>
-      expenses.filter((expense) => {
-        const matchesEmployee =
-          selectedEmployeeIdSet.size === 0 || selectedEmployeeIdSet.has(expense.employeeId);
-        if (!matchesEmployee) return false;
-
-        if (expenseStatusFilter !== "all" && expense.status !== expenseStatusFilter) return false;
-
-        return true;
-      }),
-    [expenseStatusFilter, expenses, selectedEmployeeIdSet],
-  );
-
-  const groupedExpenses = useMemo(() => {
-    const groups = new Map<
-      string,
-      {
-        employeeId: string;
-        employeeName: string;
-        employeeColor: string;
-        items: BookingExpense[];
-        totalAmount: number;
-        unpaidAmount: number;
-        unpaidCount: number;
-      }
-    >();
-
-    const sorted = [...filteredExpenses].sort((left, right) => {
-      const leftAppointment = appointmentsById.get(left.appointmentId);
-      const rightAppointment = appointmentsById.get(right.appointmentId);
-      const leftTime = leftAppointment ? new Date(leftAppointment.startsAt).getTime() : 0;
-      const rightTime = rightAppointment ? new Date(rightAppointment.startsAt).getTime() : 0;
-      return leftTime - rightTime;
-    });
-
-    for (const expense of sorted) {
-      const employee = employeesById.get(expense.employeeId);
-      const key = expense.employeeId || "__unknown__";
-      const existing =
-        groups.get(key) ||
-        {
-          employeeId: expense.employeeId,
-          employeeName: employee?.name || "Сотрудник",
-          employeeColor: employee?.color || "#0ea5e9",
-          items: [],
-          totalAmount: 0,
-          unpaidAmount: 0,
-          unpaidCount: 0,
-        };
-
-      existing.items.push(expense);
-      existing.totalAmount += expense.amount || 0;
-      if (expense.status !== "paid") {
-        existing.unpaidAmount += expense.amount || 0;
-        existing.unpaidCount += 1;
-      }
-      groups.set(key, existing);
-    }
-
-    return Array.from(groups.values()).sort((left, right) => left.employeeName.localeCompare(right.employeeName, "ru"));
-  }, [appointmentsById, employeesById, filteredExpenses]);
-
-  const visibleUnpaidExpenseCount = useMemo(
-    () => filteredExpenses.filter((expense) => expense.status !== "paid").length,
-    [filteredExpenses],
-  );
-
-  const incomeTotals = useMemo(() => {
-    let serviceAmount = 0;
-    let receivedAmount = 0;
-    let remainingAmount = 0;
-    for (const appointment of searchedAppointments) {
-      serviceAmount += appointment.serviceAmount || 0;
-      receivedAmount += getReceivedAmount(appointment);
-      remainingAmount += getRemainingAmount(appointment);
-    }
-    return {
-      serviceAmount,
-      receivedAmount,
-      remainingAmount,
-    };
-  }, [searchedAppointments]);
-
-  const expenseTotals = useMemo(() => {
-    let total = 0;
-    let unpaid = 0;
-    for (const expense of filteredExpenses) {
-      total += expense.amount || 0;
-      if (expense.status !== "paid") unpaid += expense.amount || 0;
-    }
-    return { total, unpaid };
-  }, [filteredExpenses]);
-
-  const allEmployees = calendarData?.employees || [];
+  const {
+    appointments,
+    expenses,
+    employeesById,
+    appointmentsById,
+    paymentsByAppointmentId,
+    selectedEmployeeIdSet,
+    filteredAppointments,
+    searchedAppointments,
+    filteredExpenses,
+    groupedExpenses,
+    visibleUnpaidExpenseCount,
+    incomeTotals,
+    expenseTotals,
+    allEmployees,
+  } = useKassaDerivedData({
+    calendarData,
+    selectedEmployeeIds,
+    paymentStatusFilter,
+    paymentMethodFilter,
+    showPaidAppointments,
+    expenseStatusFilter,
+    sortAppointmentsByTime,
+    getReceivedAmount,
+    getRemainingAmount,
+  });
 
   const selectedPaymentAppointment = paymentDialogAppointmentId
     ? appointmentsById.get(paymentDialogAppointmentId) || null
@@ -547,10 +424,21 @@ export default function KassaPageClient({
   const refresh = () => setRefreshTick((value) => value + 1);
 
   const openPaymentDialog = (appointment: BookingAppointment) => {
+    const remainingAmount = getRemainingAmount(appointment);
     setPaymentDialogAppointmentId(appointment.id);
-    setPaymentAmount(getRemainingAmount(appointment));
+    setPaymentAmount(remainingAmount);
+    setPaymentAmountInput(remainingAmount > 0 ? String(remainingAmount) : "");
     setPaymentMethod("kaspi_transfer");
     setPaymentDialogOpen(true);
+  };
+
+  const handlePaymentDialogOpenChange = (open: boolean) => {
+    setPaymentDialogOpen(open);
+    if (open) return;
+    setPaymentDialogAppointmentId(null);
+    setPaymentAmount(0);
+    setPaymentAmountInput("");
+    setPaymentMethod("kaspi_transfer");
   };
 
   const submitPayment = async () => {
@@ -572,8 +460,7 @@ export default function KassaPageClient({
         },
         requestContext,
       );
-      setPaymentDialogOpen(false);
-      setPaymentDialogAppointmentId(null);
+      handlePaymentDialogOpenChange(false);
       refresh();
       toast({ title: "Оплата добавлена" });
     } catch (error) {
@@ -773,25 +660,39 @@ export default function KassaPageClient({
 
                 <div className="rounded-md bg-muted/65 px-3 py-2 shadow-sm shadow-black/5 dark:bg-muted/40 dark:shadow-black/25">
                   <div className="text-[9px] font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                    Начислено
+                    {section === "income" ? "Начислено" : "Всего расходов"}
                   </div>
                   <div className="mt-0.5 text-base font-semibold tracking-tight">
-                    {formatAmount(incomeTotals.serviceAmount)} тг
+                    {formatAmount(section === "income" ? incomeTotals.serviceAmount : expenseTotals.total)} тг
                   </div>
                 </div>
 
                 <div className="rounded-md bg-muted/65 px-3 py-2 shadow-sm shadow-black/5 dark:bg-muted/40 dark:shadow-black/25">
-                  <div className="text-[9px] font-medium uppercase tracking-[0.06em] text-emerald-700 dark:text-emerald-300">
-                    Получено
+                  <div
+                    className={cn(
+                      "text-[9px] font-medium uppercase tracking-[0.06em]",
+                      section === "income"
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : "text-sky-700 dark:text-sky-300",
+                    )}
+                  >
+                    {section === "income" ? "Получено" : "Выплачено"}
                   </div>
-                  <div className="mt-0.5 text-base font-semibold tracking-tight text-emerald-900 dark:text-emerald-100">
-                    {formatAmount(incomeTotals.receivedAmount)} тг
+                  <div
+                    className={cn(
+                      "mt-0.5 text-base font-semibold tracking-tight",
+                      section === "income"
+                        ? "text-emerald-900 dark:text-emerald-100"
+                        : "text-sky-900 dark:text-sky-100",
+                    )}
+                  >
+                    {formatAmount(section === "income" ? incomeTotals.receivedAmount : expenseTotals.paid)} тг
                   </div>
                 </div>
 
                 <div className="rounded-md bg-muted/65 px-3 py-2 shadow-sm shadow-black/5 dark:bg-muted/40 dark:shadow-black/25">
                   <div className="text-[9px] font-medium uppercase tracking-[0.06em] text-amber-700 dark:text-amber-300">
-                    Остаток / к выплате
+                    {section === "income" ? "Остаток" : "К выплате"}
                   </div>
                   <div className="mt-0.5 text-base font-semibold tracking-tight text-amber-900 dark:text-amber-100">
                     {formatAmount(section === "income" ? incomeTotals.remainingAmount : expenseTotals.unpaid)} тг
@@ -817,7 +718,7 @@ export default function KassaPageClient({
                         <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-md bg-background/70 px-3">
                           <span className="shrink-0 text-xs text-muted-foreground">Статус</span>
                           <select
-                            className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm outline-none"
+                            className="h-9 min-w-0 flex-1 border-0 bg-transparent pr-8 text-sm outline-none"
                             value={paymentStatusFilter}
                             onChange={(event) =>
                               setPaymentStatusFilter(event.target.value as "all" | BookingPaymentStatus)
@@ -834,7 +735,7 @@ export default function KassaPageClient({
                         <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-md bg-background/70 px-3">
                           <span className="shrink-0 text-xs text-muted-foreground">Оплата</span>
                           <select
-                            className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm outline-none"
+                            className="h-9 min-w-0 flex-1 border-0 bg-transparent pr-8 text-sm outline-none"
                             value={paymentMethodFilter}
                             onChange={(event) =>
                               setPaymentMethodFilter(event.target.value as "all" | BookingPaymentMethod)
@@ -914,7 +815,7 @@ export default function KassaPageClient({
                       <div className="flex min-w-[240px] items-center gap-2 rounded-md bg-background/70 px-3">
                         <span className="shrink-0 text-xs text-muted-foreground">Статус</span>
                         <select
-                          className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm outline-none"
+                          className="h-9 min-w-0 flex-1 border-0 bg-transparent pr-8 text-sm outline-none"
                           value={expenseStatusFilter}
                           onChange={(event) =>
                             setExpenseStatusFilter(event.target.value as "all" | "unpaid" | "paid")
@@ -1059,7 +960,7 @@ export default function KassaPageClient({
         </div>
       </div>
 
-      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+      <Dialog open={paymentDialogOpen} onOpenChange={handlePaymentDialogOpenChange}>
         <DialogContent className="border-border/80 sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Добавить оплату</DialogTitle>
@@ -1075,20 +976,21 @@ export default function KassaPageClient({
               <Label>Сумма</Label>
               <Input
                 className="h-11 rounded-xl"
-                type="number"
-                min={0}
-                step={1}
-                value={paymentAmount}
-                onChange={(event) =>
-                  setPaymentAmount(Math.max(0, Math.round(Number(event.target.value) || 0)))
-                }
+                type="text"
+                inputMode="numeric"
+                value={paymentAmountInput}
+                onChange={(event) => {
+                  const digits = event.target.value.replace(/\D/g, "");
+                  setPaymentAmountInput(digits);
+                  setPaymentAmount(digits ? Math.max(0, Math.round(Number(digits) || 0)) : 0);
+                }}
               />
             </div>
 
             <div className="grid gap-2">
               <Label>Способ оплаты</Label>
               <select
-                className="border-input bg-background h-11 rounded-xl border px-3 text-sm"
+                className="border-input bg-background h-11 rounded-xl border pl-3 pr-10 text-sm"
                 value={paymentMethod}
                 onChange={(event) => setPaymentMethod(event.target.value as BookingPaymentMethod)}
               >
@@ -1108,7 +1010,7 @@ export default function KassaPageClient({
           </div>
 
           <DialogFooter>
-            <Button variant="outline" className="rounded-xl" onClick={() => setPaymentDialogOpen(false)}>
+            <Button variant="outline" className="rounded-xl" onClick={() => handlePaymentDialogOpenChange(false)}>
               Отмена
             </Button>
             <Button className="rounded-xl" onClick={() => void submitPayment()} disabled={paymentSaving}>

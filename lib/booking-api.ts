@@ -4,12 +4,15 @@ export type BookingPaymentStatus = 'awaiting_payment' | 'prepaid' | 'paid' | 'ca
 export type BookingExpenseStatus = 'unpaid' | 'paid';
 export type BookingCompensationType = 'percent' | 'fixed';
 export type BookingPaymentKind = 'prepaid' | 'payment' | 'adjustment';
+export type BookingAppointmentType = 'primary' | 'secondary' | 'other';
 
 export type BookingEmployee = {
   id: string;
   companyId: string;
   name: string;
   specialty?: string | null;
+  photoUrl?: string | null;
+  description?: string | null;
   color?: string | null;
   timezone: string;
   slotDurationMin: number;
@@ -49,6 +52,20 @@ export type BookingHoliday = {
   isWorkingDayOverride: boolean;
 };
 
+export type BookingWorkdayOverride = {
+  id: string;
+  companyId: string;
+  employeeId: string;
+  date: string;
+  startMinute: number;
+  endMinute: number;
+  breakStartMinute: number | null;
+  breakEndMinute: number | null;
+  breakTitle?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
 export type BookingTimeOff = {
   id: string;
   companyId: string;
@@ -64,10 +81,16 @@ export type BookingAppointment = {
   id: string;
   companyId: string;
   employeeId: string;
+  clientId?: string | null;
+  serviceId?: string | null;
+  serviceNameSnapshot?: string | null;
+  serviceTypeSnapshot?: BookingAppointmentType | string | null;
+  serviceDurationMinSnapshot?: number | null;
   startsAt: string;
   endsAt: string;
   durationMin?: number | null;
   status: string;
+  appointmentType?: BookingAppointmentType | string | null;
   clientName: string;
   clientPhone?: string | null;
   clientIin?: string | null;
@@ -84,6 +107,47 @@ export type BookingAppointment = {
   settlementAmount: number;
   settlementPaymentMethod?: BookingPaymentMethod | string | null;
   paymentStatus: BookingPaymentStatus | string;
+};
+
+export type BookingClient = {
+  id: string;
+  companyId: string;
+  fullName: string;
+  phone?: string | null;
+  iin?: string | null;
+  birthDate?: string | null;
+  gender?: 'male' | 'female' | string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type BookingServicePrice = {
+  id: string;
+  companyId: string;
+  serviceId: string;
+  employeeId: string;
+  price: number;
+  compensationType: BookingCompensationType | string;
+  compensationValue: number;
+  isActive: boolean;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type BookingService = {
+  id: string;
+  companyId: string;
+  name: string;
+  basePrice: number;
+  durationMin: number;
+  category?: string | null;
+  direction?: string | null;
+  serviceType?: string | null;
+  description?: string | null;
+  isActive: boolean;
+  prices: BookingServicePrice[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type BookingExpense = {
@@ -123,6 +187,7 @@ export type BookingCalendarViewResponse = {
   workRules: BookingWorkRule[];
   breakRules: BookingBreakRule[];
   holidays: BookingHoliday[];
+  workdayOverrides: BookingWorkdayOverride[];
   timeOff: BookingTimeOff[];
   appointments: BookingAppointment[];
   payments: BookingPayment[];
@@ -258,6 +323,8 @@ export async function listBookingEmployees(
 export async function createBookingEmployee(payload: {
   name: string;
   specialty?: string;
+  photoUrl?: string;
+  description?: string;
   color?: string;
   slotDurationMin?: number;
   compensationType?: BookingCompensationType | string;
@@ -274,6 +341,8 @@ export async function updateBookingEmployee(
   payload: {
     name?: string;
     specialty?: string | null;
+    photoUrl?: string | null;
+    description?: string | null;
     color?: string | null;
     slotDurationMin?: number;
     compensationType?: BookingCompensationType | string;
@@ -310,6 +379,111 @@ export async function replaceBookingEmployeeBreakRules(
   }, requestContext);
 }
 
+export async function listBookingServices(
+  includeInactive = false,
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ services: BookingService[] }>(
+    `/api/evo/booking/services${buildQuery({ includeInactive: includeInactive ? "true" : undefined })}`,
+    {},
+    requestContext,
+  );
+}
+
+export async function createBookingService(
+  payload: {
+    name: string;
+    basePrice?: number;
+    durationMin?: number;
+    category?: string;
+    direction?: string;
+    serviceType?: BookingAppointmentType | string;
+    description?: string;
+    isActive?: boolean;
+    employeePrices?: Array<{
+      employeeId: string;
+      price?: number;
+      compensationType?: BookingCompensationType | string;
+      compensationValue?: number;
+      isActive?: boolean;
+    }>;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ service: BookingService }>(`/api/evo/booking/services`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function listBookingClients(requestContext?: BookingRequestContext) {
+  return requestJson<{ clients: BookingClient[] }>(
+    `/api/evo/booking/clients`,
+    {},
+    requestContext,
+  );
+}
+
+export async function createBookingClient(
+  payload: {
+    fullName: string;
+    phone?: string;
+    iin?: string;
+    birthDate?: string | null;
+    gender?: string | null;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ client: BookingClient }>(`/api/evo/booking/clients`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function updateBookingClient(
+  id: string,
+  payload: {
+    fullName?: string;
+    phone?: string | null;
+    iin?: string | null;
+    birthDate?: string | null;
+    gender?: string | null;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ client: BookingClient }>(`/api/evo/booking/clients/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function updateBookingService(
+  id: string,
+  payload: {
+    name?: string;
+    basePrice?: number;
+    durationMin?: number;
+    category?: string | null;
+    direction?: string | null;
+    serviceType?: BookingAppointmentType | string | null;
+    description?: string | null;
+    isActive?: boolean;
+    employeePrices?: Array<{
+      employeeId: string;
+      price?: number;
+      compensationType?: BookingCompensationType | string;
+      compensationValue?: number;
+      isActive?: boolean;
+    }>;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ service: BookingService }>(`/api/evo/booking/services/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
 export async function fetchBookingCalendarView(params: {
   view: BookingView;
   from: string;
@@ -334,12 +508,17 @@ export async function fetchBookingCalendarView(params: {
 
 export async function createBookingAppointment(payload: {
   employeeId: string;
+  clientId?: string | null;
+  serviceId?: string | null;
   startsAt: string;
   endsAt: string;
   durationMin?: number;
+  appointmentType?: BookingAppointmentType | string;
   clientName: string;
   clientPhone?: string;
   clientIin?: string;
+  clientBirthDate?: string | null;
+  clientGender?: string | null;
   clientComment?: string;
   source?: string;
   externalRef?: string;
@@ -459,6 +638,70 @@ export async function updateBookingHoliday(
 export async function deleteBookingHoliday(id: string, requestContext?: BookingRequestContext) {
   return requestJson<{ holiday: BookingHoliday }>(`/api/evo/booking/holidays/${id}`, {
     method: 'DELETE',
+  }, requestContext);
+}
+
+export async function listBookingWorkdayOverrides(
+  params: {
+    employeeId?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  } = {},
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ workdayOverrides: BookingWorkdayOverride[] }>(
+    `/api/evo/booking/workday-overrides${buildQuery({
+      employeeId: params.employeeId,
+      from: params.from,
+      to: params.to,
+      limit: params.limit,
+    })}`,
+    {},
+    requestContext,
+  );
+}
+
+export async function createBookingWorkdayOverride(
+  payload: {
+    employeeId: string;
+    date: string;
+    startMinute: number;
+    endMinute: number;
+    breakStartMinute?: number | null;
+    breakEndMinute?: number | null;
+    breakTitle?: string | null;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ workdayOverride: BookingWorkdayOverride }>(`/api/evo/booking/workday-overrides`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function updateBookingWorkdayOverride(
+  id: string,
+  payload: {
+    employeeId?: string;
+    date?: string;
+    startMinute?: number;
+    endMinute?: number;
+    breakStartMinute?: number | null;
+    breakEndMinute?: number | null;
+    breakTitle?: string | null;
+  },
+  requestContext?: BookingRequestContext,
+) {
+  return requestJson<{ workdayOverride: BookingWorkdayOverride }>(`/api/evo/booking/workday-overrides/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  }, requestContext);
+}
+
+export async function deleteBookingWorkdayOverride(id: string, requestContext?: BookingRequestContext) {
+  return requestJson<{ workdayOverride: BookingWorkdayOverride }>(`/api/evo/booking/workday-overrides/${id}`, {
+    method: "DELETE",
   }, requestContext);
 }
 

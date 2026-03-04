@@ -6,16 +6,17 @@ import { Label } from "@/components/ui/label";
 
 export function AppointmentDurationField({
   durationMin,
+  inputValue,
   presets,
   previewEndIso,
   showPreviewSummary = true,
-  minDurationMin,
-  stepMin,
   onPresetSelect,
   onInputChange,
+  onInputBlur,
   disabled = false,
 }: {
   durationMin: number;
+  inputValue: string;
   presets: number[];
   previewEndIso: string | null;
   showPreviewSummary?: boolean;
@@ -23,6 +24,7 @@ export function AppointmentDurationField({
   stepMin: number;
   onPresetSelect: (durationMin: number) => void;
   onInputChange: (raw: string) => void;
+  onInputBlur?: () => void;
   disabled?: boolean;
 }) {
   return (
@@ -44,12 +46,11 @@ export function AppointmentDurationField({
           ))}
         </div>
         <Input
-          type="number"
-          min={minDurationMin}
-          max={720}
-          step={stepMin}
-          value={durationMin}
+          type="text"
+          inputMode="numeric"
+          value={inputValue}
           onChange={(e) => onInputChange(e.target.value)}
+          onBlur={onInputBlur}
           aria-label="Длительность в минутах"
           disabled={disabled}
         />

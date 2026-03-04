@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { Calendar } from "@/components/ui/calendar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DatePickerPopover } from "@/components/ui/date-picker-popover";
@@ -45,6 +46,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TimePicker24h } from "@/components/ui/time-picker-24h";
@@ -53,35 +55,51 @@ import {
   BookingApiError,
   BookingBreakRule,
   BookingCalendarViewResponse,
+  BookingClient,
   BookingCompensationType,
   BookingEmployee,
   BookingAppointment,
+  BookingAppointmentType,
   BookingHoliday,
   BookingPaymentMethod,
   BookingPaymentStatus,
   BookingRequestContext,
+  BookingService,
   BookingTimeOff,
+  BookingWorkdayOverride,
   BookingRuleRangeInput,
   BookingWorkRule,
   BookingView,
   cancelBookingAppointment,
   createBookingAppointment,
+  createBookingClient,
   createBookingEmployee,
+  createBookingService,
   createBookingHoliday,
+  createBookingWorkdayOverride,
   createBookingTimeOff,
   deleteBookingHoliday,
+  deleteBookingWorkdayOverride,
   deleteBookingTimeOff,
   fetchBookingCalendarView,
+  listBookingClients,
   listBookingHolidays,
+  listBookingServices,
+  listBookingWorkdayOverrides,
   replaceBookingEmployeeBreakRules,
   replaceBookingEmployeeWorkRules,
   updateBookingHoliday,
+  updateBookingWorkdayOverride,
   updateBookingTimeOff,
+  updateBookingClient,
   updateBookingEmployee,
   updateBookingAppointment,
+  updateBookingService,
 } from "@/lib/booking-api";
 import { cn } from "@/lib/utils";
 import { useAppointmentsCalendarIndexes } from "./hooks/use-appointments-calendar-indexes";
+import { useAppointmentsDirectoryData } from "./hooks/use-appointments-directory-data";
+import { useAppointmentsTimelineGrid } from "./hooks/use-appointments-timeline-grid";
 import { AppointmentDialog } from "./components/appointment-dialog";
 import { DayTimeline } from "./components/day-timeline";
 import { WeekTimeline } from "./components/week-timeline";
@@ -101,6 +119,11 @@ type AvailableSlotCandidate = {
   employeeId: string;
   startsAt: string;
   endsAt: string;
+};
+
+type TimelineCollapsedRange = {
+  isStart: boolean;
+  endMinute: number;
 };
 
 type PendingCalendarAdjustment =
@@ -143,6 +166,7 @@ type BuildCreateAppointmentCandidatesAtStartParams = {
   ignoreAppointmentId?: string;
   workRulesByEmployee: Record<string, BookingWorkRule[]>;
   breakRulesByEmployee: Record<string, BookingBreakRule[]>;
+  workdayOverrideByEmployeeDateKey: Map<string, BookingWorkdayOverride>;
   blockingHolidayByDateKey: Map<string, BookingHoliday>;
   holidayWorkOverrideDateKeys: Set<string>;
   timeOff: BookingTimeOff[];
@@ -158,8 +182,11 @@ const BOOKING_STEP_MIN = 5;
 const TIMELINE_STEP_MIN = 30;
 const FALLBACK_APPOINTMENT_DURATION_MIN = TIMELINE_STEP_MIN;
 const CALENDAR_AVAILABILITY_DURATION_MIN = BOOKING_STEP_MIN;
-const WEEK_TIMELINE_STEP_MIN = 60;
-const DAY_SUB_SLOT_COUNT = Math.max(1, Math.round(TIMELINE_STEP_MIN / BOOKING_STEP_MIN));
+const WEEK_CASCADE_VISIBLE_EMPLOYEES = 4;
+const WEEK_SLOT_HEIGHT_PX = 40;
+const WEEK_OVERLAY_LEFT_GUTTER_PX = 18;
+const WEEK_OVERLAY_CASCADE_OFFSET_PX = 12;
+const APPOINTMENT_PHONE_INPUT_LENGTH = 11;
 const DAY_SLOT_HEIGHT_PX = 64;
 const EMPLOYEE_NAME_MAX_LENGTH = 20;
 const EMPLOYEE_SPECIALTY_MAX_LENGTH = 15;
@@ -239,6 +266,9 @@ const BOOKING_ERROR_LABEL_RU: Record<string, string> = {
   OUTSIDE_WORKING_HOURS: "Слот вне рабочего времени",
   INVALID_IIN: "Некорректный ИИН",
   EMPLOYEE_NOT_FOUND: "Сотрудник не найден",
+  CLIENT_NOT_FOUND: "Клиент не найден",
+  SERVICE_NOT_FOUND: "Услуга не найдена",
+  SERVICE_NOT_AVAILABLE_FOR_EMPLOYEE: "Услуга недоступна у выбранного сотрудника",
   ACCESS_DENIED: "Нет доступа",
 };
 
@@ -286,6 +316,43 @@ type ScheduleTimeOffPreviewItem = {
   startsAt: string;
   endsAt: string;
   notes: string | null;
+};
+
+type ScheduleWorkdayOverridePreviewItem = {
+  id: string;
+  employeeId: string;
+  employeeLabel: string;
+  date: string;
+  dateLabel: string;
+  startMinute: number;
+  endMinute: number;
+  breakStartMinute: number | null;
+  breakEndMinute: number | null;
+  breakTitle: string | null;
+};
+
+type ServicePriceEditorRow = {
+  employeeId: string;
+  enabled: boolean;
+  price: number;
+  priceInput: string;
+  compensationType: BookingCompensationType;
+  compensationValue: number;
+  compensationValueInput: string;
+};
+
+type ServiceFormState = {
+  name: string;
+  basePrice: number;
+  basePriceInput: string;
+  durationMin: number;
+  durationInput: string;
+  category: string;
+  direction: string;
+  serviceType: BookingAppointmentType;
+  description: string;
+  isActive: boolean;
+  employeePrices: ServicePriceEditorRow[];
 };
 
 export type AppointmentPrefill = {
@@ -378,6 +445,49 @@ function employeeCellKeyLocal(employeeId: string, dateKey: string, minuteOfDay: 
   return `${employeeId}|${dateKey}|${minuteOfDay}`;
 }
 
+function workdayOverrideKeyLocal(employeeId: string, dateKey: string) {
+  return `${employeeId}|${dateKey}`;
+}
+
+function buildWorkdayOverrideBreakRule(
+  item: BookingWorkdayOverride | undefined,
+  weekday: number,
+): BookingBreakRule | null {
+  if (!item || item.breakStartMinute === null || item.breakStartMinute === undefined) return null;
+  if (item.breakEndMinute === null || item.breakEndMinute === undefined) return null;
+
+  return {
+    id: `${item.id}:override-break`,
+    companyId: item.companyId,
+    employeeId: item.employeeId,
+    weekday,
+    startMinute: item.breakStartMinute,
+    endMinute: item.breakEndMinute,
+    title: item.breakTitle || "Перерыв",
+    isActive: true,
+  };
+}
+
+function getEffectiveBreakRulesForDay(params: {
+  employeeId: string;
+  weekday: number;
+  dayKey: string;
+  breakRulesByEmployee: Record<string, BookingBreakRule[]>;
+  workdayOverrideByEmployeeDateKey: Map<string, BookingWorkdayOverride>;
+}) {
+  const employeeWorkdayOverride = params.workdayOverrideByEmployeeDateKey.get(
+    workdayOverrideKeyLocal(params.employeeId, params.dayKey),
+  );
+  if (employeeWorkdayOverride) {
+    const overrideBreak = buildWorkdayOverrideBreakRule(employeeWorkdayOverride, params.weekday);
+    return overrideBreak ? [overrideBreak] : [];
+  }
+
+  return ((params.breakRulesByEmployee[params.employeeId] || []) as BookingBreakRule[]).filter(
+    (rule) => rule.isActive && rule.weekday === params.weekday,
+  );
+}
+
 function formatMinuteLabel(minuteOfDay: number) {
   const h = String(Math.floor(minuteOfDay / 60)).padStart(2, "0");
   const m = String(minuteOfDay % 60).padStart(2, "0");
@@ -456,6 +566,115 @@ function alignDurationToStep(value: unknown, stepMin: number, fallback = stepMin
   return Math.max(safeStep, Math.min(12 * 60, aligned));
 }
 
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function formatOptionalMoneyInput(value: unknown) {
+  const normalized = Math.max(0, Math.round(Number(value) || 0));
+  return normalized > 0 ? String(normalized) : "";
+}
+
+function clampCompensationValue(
+  value: unknown,
+  compensationType: BookingCompensationType = "percent",
+) {
+  const normalized = Math.max(0, Math.round(Number(value) || 0));
+  return compensationType === "percent" ? Math.min(100, normalized) : normalized;
+}
+
+function getNameInitials(value: string) {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!parts.length) return "??";
+  return parts.map((part) => part.slice(0, 1).toUpperCase()).join("");
+}
+
+function buildServicePriceEditorRows(
+  employees: BookingEmployee[],
+  service?: BookingService | null,
+): ServicePriceEditorRow[] {
+  const priceByEmployeeId = new Map(service?.prices.map((item) => [item.employeeId, item] as const) || []);
+
+  return employees.map((employee) => {
+    const price = priceByEmployeeId.get(employee.id);
+    const normalizedPrice = Math.max(0, Math.round(Number(price?.price) || 0));
+    const enabled = Boolean(price?.isActive && normalizedPrice > 0);
+    const fallbackCompensationType = ((employee.compensationType as BookingCompensationType) || "percent");
+    const fallbackCompensationValue = clampCompensationValue(employee.compensationValue ?? 0, fallbackCompensationType);
+    const compensationType = ((price?.compensationType as BookingCompensationType) || fallbackCompensationType);
+    const compensationValue = clampCompensationValue(
+      price?.compensationValue ?? fallbackCompensationValue,
+      compensationType,
+    );
+
+    return {
+      employeeId: employee.id,
+      enabled,
+      price: normalizedPrice,
+      priceInput: normalizedPrice > 0 ? String(normalizedPrice) : "",
+      compensationType,
+      compensationValue,
+      compensationValueInput: formatOptionalMoneyInput(compensationValue),
+    };
+  });
+}
+
+function buildDefaultServiceForm(employees: BookingEmployee[], service?: BookingService | null): ServiceFormState {
+  const durationMin = clampAppointmentDurationMin(service?.durationMin, FALLBACK_APPOINTMENT_DURATION_MIN);
+  const basePrice = Math.max(0, Math.round(Number(service?.basePrice) || 0));
+  return {
+    name: service?.name || "",
+    basePrice,
+    basePriceInput: formatOptionalMoneyInput(basePrice),
+    durationMin,
+    durationInput: String(durationMin),
+    category: service?.category || "",
+    direction: service?.direction || "",
+    serviceType: inferAppointmentTypeFromServiceType(service?.serviceType) || "primary",
+    description: service?.description || "",
+    isActive: service?.isActive ?? true,
+    employeePrices: buildServicePriceEditorRows(employees, service),
+  };
+}
+
+function normalizeAppointmentPhoneInput(value: string) {
+  const digits = digitsOnly(value);
+  if (!digits) return "";
+  if (digits.length > APPOINTMENT_PHONE_INPUT_LENGTH && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return digits.slice(1, APPOINTMENT_PHONE_INPUT_LENGTH + 1);
+  }
+  return digits.slice(0, APPOINTMENT_PHONE_INPUT_LENGTH);
+}
+
+function toAppointmentPhoneInputValue(value: string | null | undefined) {
+  const digits = digitsOnly(String(value || ""));
+  if (!digits) return "";
+  if (digits.length >= APPOINTMENT_PHONE_INPUT_LENGTH + 1 && digits.startsWith("7")) {
+    return digits.slice(1, APPOINTMENT_PHONE_INPUT_LENGTH + 1);
+  }
+  if (digits.length === APPOINTMENT_PHONE_INPUT_LENGTH) return digits;
+  return digits.slice(0, APPOINTMENT_PHONE_INPUT_LENGTH);
+}
+
+function serializeAppointmentPhone(value: string) {
+  const digits = normalizeAppointmentPhoneInput(value);
+  if (!digits) return null;
+  if (digits.length === APPOINTMENT_PHONE_INPUT_LENGTH) return `7${digits}`;
+  if (digits.length === APPOINTMENT_PHONE_INPUT_LENGTH + 1 && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return `7${digits.slice(1)}`;
+  }
+  return null;
+}
+
+function formatAppointmentPhoneDisplay(value: string | null | undefined) {
+  const inputValue = toAppointmentPhoneInputValue(value);
+  return inputValue ? `+7 ${inputValue}` : null;
+}
+
 function buildDurationPresets(stepMin: number, _currentDurationMin: number) {
   const safeStep = normalizeDurationStepMin(stepMin, BOOKING_STEP_MIN);
   const set = new Set<number>();
@@ -490,6 +709,7 @@ function getMinuteOfDayFromIso(iso: string) {
 
 function pickAvailableSlotCandidate(
   candidates: AvailableSlotCandidate[],
+  rowDurationMin = TIMELINE_STEP_MIN,
   clientY?: number,
   containerEl?: HTMLElement | null,
 ) {
@@ -503,8 +723,8 @@ function pickAvailableSlotCandidate(
   const targetOffsetMin = Math.max(
     0,
     Math.min(
-      TIMELINE_STEP_MIN - BOOKING_STEP_MIN,
-      Math.round(((relativeY / rect.height) * TIMELINE_STEP_MIN) / BOOKING_STEP_MIN) * BOOKING_STEP_MIN,
+      rowDurationMin - BOOKING_STEP_MIN,
+      Math.round(((relativeY / rect.height) * rowDurationMin) / BOOKING_STEP_MIN) * BOOKING_STEP_MIN,
     ),
   );
 
@@ -515,7 +735,7 @@ function pickAvailableSlotCandidate(
   for (const candidate of candidates) {
     const startMinute = getMinuteOfDayFromIso(candidate.startsAt);
     if (startMinute === null) continue;
-    const offsetMin = ((startMinute % TIMELINE_STEP_MIN) + TIMELINE_STEP_MIN) % TIMELINE_STEP_MIN;
+    const offsetMin = ((startMinute % rowDurationMin) + rowDurationMin) % rowDurationMin;
     const distance = Math.abs(offsetMin - targetOffsetMin);
     if (distance < bestDistance || (distance === bestDistance && startMinute < bestMinute)) {
       bestCandidate = candidate;
@@ -527,12 +747,12 @@ function pickAvailableSlotCandidate(
   return bestCandidate;
 }
 
-function getDaySubSlotOffsetMin(clientY?: number, containerEl?: HTMLElement | null) {
-  const subSlotIndex = getDaySubSlotIndex(clientY, containerEl);
+function getDaySubSlotOffsetMin(daySubSlotCount: number, clientY?: number, containerEl?: HTMLElement | null) {
+  const subSlotIndex = getDaySubSlotIndex(daySubSlotCount, clientY, containerEl);
   return subSlotIndex * BOOKING_STEP_MIN;
 }
 
-function getDaySubSlotIndex(clientY?: number, containerEl?: HTMLElement | null) {
+function getDaySubSlotIndex(daySubSlotCount: number, clientY?: number, containerEl?: HTMLElement | null) {
   if (clientY === undefined || !containerEl) return 0;
 
   const rect = containerEl.getBoundingClientRect();
@@ -540,7 +760,7 @@ function getDaySubSlotIndex(clientY?: number, containerEl?: HTMLElement | null) 
 
   const relativeY = Math.max(0, Math.min(rect.height, clientY - rect.top));
   const normalizedPosition = Math.min(0.999999, relativeY / rect.height);
-  return Math.max(0, Math.min(DAY_SUB_SLOT_COUNT - 1, Math.floor(normalizedPosition * DAY_SUB_SLOT_COUNT)));
+  return Math.max(0, Math.min(daySubSlotCount - 1, Math.floor(normalizedPosition * daySubSlotCount)));
 }
 
 function intervalsOverlap(startA: Date, endA: Date, startB: Date, endB: Date) {
@@ -571,6 +791,7 @@ function buildCreateAppointmentCandidatesAtStart({
   ignoreAppointmentId,
   workRulesByEmployee,
   breakRulesByEmployee,
+  workdayOverrideByEmployeeDateKey,
   blockingHolidayByDateKey,
   holidayWorkOverrideDateKeys,
   timeOff,
@@ -586,8 +807,7 @@ function buildCreateAppointmentCandidatesAtStart({
 
   const dayKey = toDateKeyLocal(startsAt);
   const holiday = blockingHolidayByDateKey.get(dayKey);
-  const workOverride = holidayWorkOverrideDateKeys.has(dayKey);
-  if (holiday && !workOverride) return [];
+  const holidayWorkOverride = holidayWorkOverrideDateKeys.has(dayKey);
 
   const endsAt = new Date(startsAt);
   endsAt.setMinutes(endsAt.getMinutes() + normalizedDurationMin);
@@ -599,23 +819,30 @@ function buildCreateAppointmentCandidatesAtStart({
   for (const employee of employees) {
     if (allowedEmployeeIds && !allowedEmployeeIds.has(employee.id)) continue;
 
+    const employeeWorkdayOverride = workdayOverrideByEmployeeDateKey.get(workdayOverrideKeyLocal(employee.id, dayKey));
+    if (holiday && !holidayWorkOverride && !employeeWorkdayOverride) continue;
+
     const employeeWorkRules = workRulesByEmployee[employee.id] || [];
-    const employeeBreakRules = breakRulesByEmployee[employee.id] || [];
-    const fitsWorkRule = employeeWorkRules.some(
-      (rule) =>
-        rule.isActive &&
-        rule.weekday === weekday &&
-        startMinute >= rule.startMinute &&
-        endMinute <= rule.endMinute,
-    );
+    const employeeBreakRules = getEffectiveBreakRulesForDay({
+      employeeId: employee.id,
+      weekday,
+      dayKey,
+      breakRulesByEmployee,
+      workdayOverrideByEmployeeDateKey,
+    });
+    const fitsWorkRule = employeeWorkdayOverride
+      ? startMinute >= employeeWorkdayOverride.startMinute && endMinute <= employeeWorkdayOverride.endMinute
+      : employeeWorkRules.some(
+        (rule) =>
+          rule.isActive &&
+          rule.weekday === weekday &&
+          startMinute >= rule.startMinute &&
+          endMinute <= rule.endMinute,
+      );
     if (!fitsWorkRule) continue;
 
     const overlapsBreak = employeeBreakRules.some(
-      (rule) =>
-        rule.isActive &&
-        rule.weekday === weekday &&
-        startMinute < rule.endMinute &&
-        endMinute > rule.startMinute,
+      (rule) => startMinute < rule.endMinute && endMinute > rule.startMinute,
     );
     if (overlapsBreak) continue;
 
@@ -913,21 +1140,53 @@ function buildScheduleEditorRows(
   });
 }
 
+function buildDisabledScheduleRowPatch(): Partial<ScheduleDayRow> {
+  return {
+    workEnabled: false,
+    breakEnabled: false,
+    breakStart: minuteToInputTime(13 * 60),
+    breakEnd: minuteToInputTime(14 * 60),
+    breakTitle: "Перерыв",
+  };
+}
+
+const SERVICE_APPOINTMENT_TYPE_OPTIONS: Array<{ value: BookingAppointmentType; label: string }> = [
+  { value: "primary", label: "Первичная запись" },
+  { value: "secondary", label: "Вторичная запись" },
+  { value: "other", label: "Другое" },
+];
+
+function getServiceAppointmentTypeLabel(serviceType?: string | null) {
+  return (
+    SERVICE_APPOINTMENT_TYPE_OPTIONS.find((item) => item.value === inferAppointmentTypeFromServiceType(serviceType))
+      ?.label || null
+  );
+}
+
+function inferAppointmentTypeFromServiceType(serviceType?: string | null): BookingAppointmentType | null {
+  const normalized = String(serviceType || "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "primary" || normalized.includes("первич")) return "primary";
+  if (normalized === "secondary" || normalized.includes("вторич") || normalized.includes("повтор")) return "secondary";
+  if (normalized === "other" || normalized.includes("друг")) return "other";
+  return null;
+}
+
 export default function AppointmentsPageClient({
   prefill,
   requestContext,
 }: AppointmentsPageClientProps = {}) {
   const appointmentVisibilityHydratedRef = useRef(false);
-  const autoScrollKeyRef = useRef<string | null>(null);
-  const autoScrollInteractedRef = useRef(false);
-  const autoScrollSuppressUntilRef = useRef(0);
-  const timelineAnchorKeyRef = useRef<string | null>(null);
   const { toast } = useToast();
   const [view, setView] = useState<BookingView>("week");
+  const [directoryTab, setDirectoryTab] = useState<"employees" | "services">("employees");
   const [contentTab, setContentTab] = useState<"calendar" | "list">("calendar");
   const [anchorDate, setAnchorDate] = useState<Date>(new Date());
   const [calendarData, setCalendarData] = useState<BookingCalendarViewResponse | null>(null);
+  const [clientCatalog, setClientCatalog] = useState<BookingClient[]>([]);
+  const [serviceCatalog, setServiceCatalog] = useState<BookingService[]>([]);
   const [holidayCatalog, setHolidayCatalog] = useState<BookingHoliday[]>([]);
+  const [workdayOverrideCatalog, setWorkdayOverrideCatalog] = useState<BookingWorkdayOverride[]>([]);
   const [selectionInitialized, setSelectionInitialized] = useState(false);
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -939,6 +1198,9 @@ export default function AppointmentsPageClient({
   const [appointmentDialogMode, setAppointmentDialogMode] = useState<"create" | "view" | "edit">("create");
   const [activeAppointmentId, setActiveAppointmentId] = useState<string | null>(null);
   const [appointmentForm, setAppointmentForm] = useState({
+    appointmentType: "primary" as BookingAppointmentType,
+    clientId: null as string | null,
+    serviceId: null as string | null,
     clientName: "",
     clientPhone: "",
     clientIin: "",
@@ -948,12 +1210,14 @@ export default function AppointmentsPageClient({
     prepaidAmount: 0,
     prepaidPaymentMethod: "kaspi_transfer" as BookingPaymentMethod,
   });
-  const [appointmentServiceAmountInput, setAppointmentServiceAmountInput] = useState("0");
-  const [appointmentPrepaidAmountInput, setAppointmentPrepaidAmountInput] = useState("0");
+  const [appointmentDurationInput, setAppointmentDurationInput] = useState(String(FALLBACK_APPOINTMENT_DURATION_MIN));
+  const [appointmentServiceAmountInput, setAppointmentServiceAmountInput] = useState("");
+  const [appointmentPrepaidAmountInput, setAppointmentPrepaidAmountInput] = useState("");
   const [appointmentStatusDraft, setAppointmentStatusDraft] = useState<string>("scheduled");
   const [appointmentSaving, setAppointmentSaving] = useState(false);
   const [appointmentStatusSavingId, setAppointmentStatusSavingId] = useState<string | null>(null);
   const [slotAvailabilityDurationMin, setSlotAvailabilityDurationMin] = useState<number>(FALLBACK_APPOINTMENT_DURATION_MIN);
+  const [appointmentClientDetailsOpen, setAppointmentClientDetailsOpen] = useState(false);
 
   const [employeeDialogOpen, setEmployeeDialogOpen] = useState(false);
   const [employeeDialogMode, setEmployeeDialogMode] = useState<"create" | "edit">("create");
@@ -961,21 +1225,28 @@ export default function AppointmentsPageClient({
   const [employeeForm, setEmployeeForm] = useState({
     name: "",
     specialty: "",
+    photoUrl: "",
+    description: "",
     slotDurationMin: FALLBACK_APPOINTMENT_DURATION_MIN,
     color: EMPLOYEE_COLOR_POOL[0]!,
     compensationType: "percent" as BookingCompensationType,
     compensationValue: 0,
   });
-  const [employeeCompensationValueInput, setEmployeeCompensationValueInput] = useState("0");
+  const [employeeSlotDurationInput, setEmployeeSlotDurationInput] = useState(String(FALLBACK_APPOINTMENT_DURATION_MIN));
+  const [employeeCompensationValueInput, setEmployeeCompensationValueInput] = useState("");
   const [employeeSaving, setEmployeeSaving] = useState(false);
+
+  const [serviceDialogOpen, setServiceDialogOpen] = useState(false);
+  const [serviceDialogMode, setServiceDialogMode] = useState<"create" | "edit">("create");
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [serviceForm, setServiceForm] = useState<ServiceFormState>(() => buildDefaultServiceForm([]));
+  const [serviceSaving, setServiceSaving] = useState(false);
+  const [servicePriceDialogOpen, setServicePriceDialogOpen] = useState(false);
 
   const clampEmployeeCompensationValue = (
     value: number,
     compensationType: BookingCompensationType = employeeForm.compensationType,
-  ) => {
-    const normalized = Math.max(0, Math.round(value));
-    return compensationType === "percent" ? Math.min(100, normalized) : normalized;
-  };
+  ) => clampCompensationValue(value, compensationType);
 
   const [holidayDialogOpen, setHolidayDialogOpen] = useState(false);
   const [holidayDialogMode, setHolidayDialogMode] = useState<"create" | "edit">("create");
@@ -989,6 +1260,23 @@ export default function AppointmentsPageClient({
   const [holidaySaving, setHolidaySaving] = useState(false);
   const [pendingHolidayDeletion, setPendingHolidayDeletion] = useState<ScheduleHolidayPreviewItem | null>(null);
   const [holidayDeleting, setHolidayDeleting] = useState(false);
+
+  const [workdayOverrideDialogOpen, setWorkdayOverrideDialogOpen] = useState(false);
+  const [workdayOverrideDialogMode, setWorkdayOverrideDialogMode] = useState<"create" | "edit">("create");
+  const [editingWorkdayOverrideId, setEditingWorkdayOverrideId] = useState<string | null>(null);
+  const [workdayOverrideForm, setWorkdayOverrideForm] = useState({
+    employeeId: "",
+    date: toDateKeyLocal(new Date()),
+    startTime: minuteToInputTime(9 * 60),
+    endTime: minuteToInputTime(18 * 60),
+    breakEnabled: false,
+    breakStartTime: minuteToInputTime(13 * 60),
+    breakEndTime: minuteToInputTime(14 * 60),
+    breakTitle: "Перерыв",
+  });
+  const [workdayOverrideSaving, setWorkdayOverrideSaving] = useState(false);
+  const [pendingWorkdayOverrideDeletion, setPendingWorkdayOverrideDeletion] = useState<ScheduleWorkdayOverridePreviewItem | null>(null);
+  const [workdayOverrideDeleting, setWorkdayOverrideDeleting] = useState(false);
 
   const [timeOffDialogOpen, setTimeOffDialogOpen] = useState(false);
   const [timeOffDialogMode, setTimeOffDialogMode] = useState<"create" | "edit">("create");
@@ -1045,7 +1333,7 @@ export default function AppointmentsPageClient({
 
       return {
         clientName: (prefill?.clientName || "").trim(),
-        clientPhone: (prefill?.clientPhone || "").trim(),
+        clientPhone: toAppointmentPhoneInputValue(prefill?.clientPhone),
         clientIin: normalizeIin(prefill?.clientIin || "").slice(0, 12),
         clientComment,
         source: (prefill?.source || "dashboard").trim() || "dashboard",
@@ -1095,6 +1383,54 @@ export default function AppointmentsPageClient({
   }, [anchorDate.getTime(), view, refreshTick, requestContext?.companyId, requestContext?.agentId]);
 
   useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const response = await listBookingServices(true, requestContext);
+        if (!active) return;
+        setServiceCatalog(response.services);
+      } catch (error) {
+        if (!active) return;
+        toast({
+          title: "Не удалось загрузить услуги",
+          description: getErrorMessage(error),
+        });
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [refreshTick, requestContext?.companyId, requestContext?.agentId, toast]);
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const response = await listBookingClients(requestContext);
+        if (!active) return;
+        setClientCatalog(response.clients);
+      } catch (error) {
+        if (!active) return;
+        toast({
+          title: "Не удалось загрузить клиентов",
+          description: getErrorMessage(error),
+        });
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [refreshTick, requestContext?.companyId, requestContext?.agentId, toast]);
+
+  useEffect(() => {
     if (!scheduleDialogOpen || scheduleDialogTab !== "exceptions") return;
 
     let active = true;
@@ -1127,16 +1463,66 @@ export default function AppointmentsPageClient({
     toast,
   ]);
 
+  useEffect(() => {
+    if (!scheduleDialogOpen || !scheduleEmployeeId) return;
+
+    let active = true;
+    const from = toDateKeyLocal(startOfDay(anchorDate));
+
+    const load = async () => {
+      try {
+        const response = await listBookingWorkdayOverrides({
+          employeeId: scheduleEmployeeId,
+          from,
+          limit: 120,
+        }, requestContext);
+        if (!active) return;
+        setWorkdayOverrideCatalog(response.workdayOverrides);
+      } catch (error) {
+        if (!active) return;
+        toast({
+          title: "Не удалось загрузить конкретные рабочие дни",
+          description: getErrorMessage(error),
+        });
+      }
+    };
+
+    void load();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    scheduleDialogOpen,
+    scheduleEmployeeId,
+    anchorDate,
+    refreshTick,
+    requestContext?.companyId,
+    requestContext?.agentId,
+    toast,
+  ]);
+
   const rawEmployees = calendarData?.employees || [];
-  const employees = useMemo(
-    () =>
-      rawEmployees.map((employee) => ({
-        ...employee,
-        color: employee.color || getEmployeeColorFallback(employee.id),
-      })),
-    [rawEmployees],
-  );
-  const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee] as const)), [employees]);
+  const selectedAppointmentEmployeeId = slotDraft?.employeeId || null;
+  const {
+    employees,
+    employeesById,
+    clients,
+    clientsById,
+    appointmentClientOptions,
+    services,
+    servicesById,
+    appointmentServiceOptions,
+  } = useAppointmentsDirectoryData({
+    rawEmployees,
+    clientCatalog,
+    serviceCatalog,
+    selectedServiceId: appointmentForm.serviceId,
+    selectedEmployeeId: selectedAppointmentEmployeeId,
+    getEmployeeColorFallback,
+    formatAppointmentPhoneDisplay,
+    getServiceAppointmentTypeLabel,
+  });
   const getEmployeeDefaultDurationMin = (employeeId?: string | null) =>
     normalizeDurationStepMin(
       employeeId ? employeesById.get(employeeId)?.slotDurationMin : null,
@@ -1156,12 +1542,12 @@ export default function AppointmentsPageClient({
   const appointmentPreviewEndIso = appointmentPreviewStartIso
     ? addMinutesToIso(appointmentPreviewStartIso, appointmentDurationMin)
     : null;
-  const selectedSet = useMemo(() => new Set(selectedEmployeeIds), [selectedEmployeeIds]);
-  const visibleEmployees = useMemo(
-    () => (selectionInitialized ? employees.filter((employee) => selectedSet.has(employee.id)) : []),
-    [selectionInitialized, employees, selectedSet],
+  const selectedAppointmentClient = appointmentForm.clientId ? clientsById.get(appointmentForm.clientId) || null : null;
+  const selectedAppointmentService = appointmentForm.serviceId ? servicesById.get(appointmentForm.serviceId) || null : null;
+  const serviceHasCustomPrices = useMemo(
+    () => serviceForm.employeePrices.some((row) => row.enabled),
+    [serviceForm.employeePrices],
   );
-  const visibleEmployeeIdSet = useMemo(() => new Set(visibleEmployees.map((employee) => employee.id)), [visibleEmployees]);
 
   useEffect(() => {
     if (!calendarData || selectionInitialized) return;
@@ -1255,6 +1641,7 @@ export default function AppointmentsPageClient({
     );
     if (alignedDuration !== appointmentForm.durationMin) {
       setAppointmentForm((prev) => ({ ...prev, durationMin: alignedDuration }));
+      setAppointmentDurationInput(String(alignedDuration));
     }
     if (slotAvailabilityDurationMin !== alignedDuration) {
       setSlotAvailabilityDurationMin(alignedDuration);
@@ -1285,6 +1672,31 @@ export default function AppointmentsPageClient({
     () => (calendarData?.appointments || []).filter((appointment) => appointmentIsActive(appointment.status)),
     [calendarData?.appointments],
   );
+  const {
+    selectedSet,
+    visibleEmployees,
+    timelineStepMin,
+    weekTimelineStepMin,
+    daySubSlotCount,
+    visibleEmployeeIdSet,
+    visibleEmployeeIndexById,
+    weekVisibleEmployeeCascadeCount,
+    timelineRange,
+    dayTimeRows,
+    weekTimeRows,
+    timeRowIndexByMinute,
+    weekTimeRowIndexByMinute,
+  } = useAppointmentsTimelineGrid({
+    employees,
+    selectionInitialized,
+    selectedEmployeeIds,
+    workRules: calendarData?.workRules || [],
+    workdayOverrides: calendarData?.workdayOverrides || [],
+    activeAppointments,
+    baseTimelineStepMin: TIMELINE_STEP_MIN,
+    bookingStepMin: BOOKING_STEP_MIN,
+    weekCascadeVisibleEmployees: WEEK_CASCADE_VISIBLE_EMPLOYEES,
+  });
   const activeDialogAppointment = useMemo(
     () =>
       activeAppointmentId
@@ -1314,72 +1726,11 @@ export default function AppointmentsPageClient({
     return true;
   };
 
-  const timelineRange = useMemo(() => {
-    let minMinute = 8 * 60;
-    let maxMinute = 20 * 60;
-    const currentMinuteOfDay = (() => {
-      const now = new Date();
-      return now.getHours() * 60 + now.getMinutes();
-    })();
-    const initialWorkRulesByEmployee: Record<string, BookingWorkRule[]> = {};
-    for (const rule of calendarData?.workRules || []) {
-      if (!initialWorkRulesByEmployee[rule.employeeId]) initialWorkRulesByEmployee[rule.employeeId] = [];
-      initialWorkRulesByEmployee[rule.employeeId].push(rule);
-    }
-    for (const employee of visibleEmployees) {
-      const rules = initialWorkRulesByEmployee[employee.id] || [];
-      for (const rule of rules) {
-        minMinute = Math.min(minMinute, Math.max(0, rule.startMinute - 30));
-        maxMinute = Math.max(maxMinute, Math.min(24 * 60, rule.endMinute + 30));
-      }
-    }
-    for (const appointment of activeAppointments) {
-      if (!visibleEmployeeIdSet.has(appointment.employeeId)) continue;
-      const start = new Date(appointment.startsAt);
-      const end = new Date(appointment.endsAt);
-      minMinute = Math.min(minMinute, start.getHours() * 60 + start.getMinutes() - 30);
-      maxMinute = Math.max(maxMinute, end.getHours() * 60 + end.getMinutes() + 30);
-    }
-    minMinute = Math.min(minMinute, currentMinuteOfDay - TIMELINE_STEP_MIN);
-    maxMinute = Math.max(maxMinute, currentMinuteOfDay + TIMELINE_STEP_MIN);
-    minMinute = Math.max(0, Math.floor(minMinute / TIMELINE_STEP_MIN) * TIMELINE_STEP_MIN);
-    maxMinute = Math.min(24 * 60, Math.ceil(maxMinute / TIMELINE_STEP_MIN) * TIMELINE_STEP_MIN);
-    return { minMinute, maxMinute };
-  }, [calendarData?.workRules, visibleEmployees, activeAppointments, visibleEmployeeIdSet]);
-
-  const dayTimeRows = useMemo(() => {
-    const rows: number[] = [];
-    for (let minute = timelineRange.minMinute; minute < timelineRange.maxMinute; minute += TIMELINE_STEP_MIN) {
-      rows.push(minute);
-    }
-    return rows;
-  }, [timelineRange]);
-
-  const weekTimeRows = useMemo(() => {
-    const minMinute = Math.max(
-      0,
-      Math.floor(timelineRange.minMinute / WEEK_TIMELINE_STEP_MIN) * WEEK_TIMELINE_STEP_MIN,
-    );
-    const maxMinute = Math.min(
-      24 * 60,
-      Math.ceil(timelineRange.maxMinute / WEEK_TIMELINE_STEP_MIN) * WEEK_TIMELINE_STEP_MIN,
-    );
-    const rows: number[] = [];
-    for (let minute = minMinute; minute < maxMinute; minute += WEEK_TIMELINE_STEP_MIN) {
-      rows.push(minute);
-    }
-    return rows;
-  }, [timelineRange]);
-
-  const timeRowIndexByMinute = useMemo(
-    () => new Map(dayTimeRows.map((minute, index) => [minute, index] as const)),
-    [dayTimeRows],
-  );
-
   const {
     slotMap,
     workRulesByEmployee,
     breakRulesByEmployee,
+    workdayOverrideByEmployeeDateKey,
     monthStats,
     holidaysByDateKey,
     blockedHolidaysByDateKey,
@@ -1415,16 +1766,33 @@ export default function AppointmentsPageClient({
     if (Number.isNaN(selectedStartsAt.getTime())) return [];
 
     const targetDay = startOfDay(selectedStartsAt);
+    const targetDayKey = toDateKeyLocal(targetDay);
     const weekday = targetDay.getDay();
     const employeeWorkRules = (workRulesByEmployee[slotDraft.employeeId] || []) as BookingWorkRule[];
+    const employeeWorkdayOverride = workdayOverrideByEmployeeDateKey.get(
+      workdayOverrideKeyLocal(slotDraft.employeeId, targetDayKey),
+    );
     const optionMinutes = new Set<number>();
 
-    for (const rule of employeeWorkRules) {
-      if (!rule.isActive || rule.weekday !== weekday) continue;
-      const latestStartMinute = rule.endMinute - appointmentDurationMin;
-      if (latestStartMinute < rule.startMinute) continue;
-      for (let minute = rule.startMinute; minute <= latestStartMinute; minute += BOOKING_STEP_MIN) {
-        optionMinutes.add(minute);
+    if (employeeWorkdayOverride) {
+      const latestStartMinute = employeeWorkdayOverride.endMinute - appointmentDurationMin;
+      if (latestStartMinute >= employeeWorkdayOverride.startMinute) {
+        for (
+          let minute = employeeWorkdayOverride.startMinute;
+          minute <= latestStartMinute;
+          minute += BOOKING_STEP_MIN
+        ) {
+          optionMinutes.add(minute);
+        }
+      }
+    } else {
+      for (const rule of employeeWorkRules) {
+        if (!rule.isActive || rule.weekday !== weekday) continue;
+        const latestStartMinute = rule.endMinute - appointmentDurationMin;
+        if (latestStartMinute < rule.startMinute) continue;
+        for (let minute = rule.startMinute; minute <= latestStartMinute; minute += BOOKING_STEP_MIN) {
+          optionMinutes.add(minute);
+        }
       }
     }
 
@@ -1446,6 +1814,7 @@ export default function AppointmentsPageClient({
         ignoreAppointmentId: appointmentDialogMode === "edit" ? activeAppointmentId || undefined : undefined,
         workRulesByEmployee,
         breakRulesByEmployee,
+        workdayOverrideByEmployeeDateKey,
         blockingHolidayByDateKey,
         holidayWorkOverrideDateKeys,
         timeOff: calendarData?.timeOff || [],
@@ -1522,6 +1891,7 @@ export default function AppointmentsPageClient({
     employees,
     workRulesByEmployee,
     breakRulesByEmployee,
+    workdayOverrideByEmployeeDateKey,
     blockingHolidayByDateKey,
     holidayWorkOverrideDateKeys,
     calendarData?.timeOff,
@@ -1538,18 +1908,23 @@ export default function AppointmentsPageClient({
     );
 
     for (const day of dayListForTimeline) {
+      const dayKey = toDateKeyLocal(day);
       const weekday = day.getDay();
 
       for (const employee of visibleEmployees) {
         const employeeWorkRules = (workRulesByEmployee[employee.id] || []) as BookingWorkRule[];
+        const employeeWorkdayOverride = workdayOverrideByEmployeeDateKey.get(workdayOverrideKeyLocal(employee.id, dayKey));
+        const sourceRanges = employeeWorkdayOverride
+          ? [{ startMinute: employeeWorkdayOverride.startMinute, endMinute: employeeWorkdayOverride.endMinute }]
+          : employeeWorkRules
+              .filter((rule) => rule.isActive && rule.weekday === weekday)
+              .map((rule) => ({ startMinute: rule.startMinute, endMinute: rule.endMinute }));
 
-        for (const rule of employeeWorkRules) {
-          if (!rule.isActive || rule.weekday !== weekday) continue;
+        for (const range of sourceRanges) {
+          const latestStartMinute = range.endMinute - dragDurationMin;
+          if (latestStartMinute < range.startMinute) continue;
 
-          const latestStartMinute = rule.endMinute - dragDurationMin;
-          if (latestStartMinute < rule.startMinute) continue;
-
-          for (let minute = rule.startMinute; minute <= latestStartMinute; minute += BOOKING_STEP_MIN) {
+          for (let minute = range.startMinute; minute <= latestStartMinute; minute += BOOKING_STEP_MIN) {
             const startsAtIso = createCellDate(day, minute).toISOString();
             const candidate = buildCreateAppointmentCandidatesAtStart({
               startsAtIso,
@@ -1559,6 +1934,7 @@ export default function AppointmentsPageClient({
               ignoreAppointmentId: draggingAppointment.id,
               workRulesByEmployee,
               breakRulesByEmployee,
+              workdayOverrideByEmployeeDateKey,
               blockingHolidayByDateKey,
               holidayWorkOverrideDateKeys,
               timeOff: calendarData?.timeOff || [],
@@ -1582,6 +1958,7 @@ export default function AppointmentsPageClient({
     employees,
     workRulesByEmployee,
     breakRulesByEmployee,
+    workdayOverrideByEmployeeDateKey,
     blockingHolidayByDateKey,
     holidayWorkOverrideDateKeys,
     calendarData?.timeOff,
@@ -1598,6 +1975,7 @@ export default function AppointmentsPageClient({
       candidateEmployeeIds: createCandidateEmployeeIds,
       workRulesByEmployee,
       breakRulesByEmployee,
+      workdayOverrideByEmployeeDateKey,
       blockingHolidayByDateKey,
       holidayWorkOverrideDateKeys,
       timeOff: calendarData?.timeOff || [],
@@ -1639,6 +2017,7 @@ export default function AppointmentsPageClient({
     employees,
     workRulesByEmployee,
     breakRulesByEmployee,
+    workdayOverrideByEmployeeDateKey,
     blockingHolidayByDateKey,
     holidayWorkOverrideDateKeys,
     calendarData?.timeOff,
@@ -1651,6 +2030,189 @@ export default function AppointmentsPageClient({
   const weekGridMinWidth = weekTimeColumnWidth + weekDayMinColumnWidth * weekDaysCount;
   const weekHeaderTitle = `Неделя ${getWeekOfMonth(anchorDate)}`;
   const weekHeaderSubtitle = getEmployeeCountLabelRu(visibleEmployees.length);
+  const dayCollapsedRangeByDayMinuteKey = useMemo(() => {
+    const rangesByDayMinuteKey = new Map<string, TimelineCollapsedRange>();
+
+    for (const day of dayListForTimeline) {
+      const dayKey = toDateKeyLocal(day);
+      let currentRangeKeys: string[] = [];
+
+      const flushRange = () => {
+        if (currentRangeKeys.length > 1) {
+          const lastMinute = Number(currentRangeKeys[currentRangeKeys.length - 1]?.split("|").pop() || 0);
+          const endMinute = lastMinute + timelineStepMin;
+          currentRangeKeys.forEach((rowKey, index) => {
+            rangesByDayMinuteKey.set(rowKey, {
+              isStart: index === 0,
+              endMinute,
+            });
+          });
+        }
+        currentRangeKeys = [];
+      };
+
+      for (const minuteOfDay of dayTimeRows) {
+        const bucketMinutes = getTimelineBucketMinutes(minuteOfDay, timelineStepMin, BOOKING_STEP_MIN);
+        let hasVisibleAppointment = false;
+        let hasAvailableSlot = false;
+
+        for (const bucketMinute of bucketMinutes) {
+          const bucketDayMinuteKey = dayMinuteKeyLocal(dayKey, bucketMinute);
+          const overlappingAppointments = appointmentsOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || [];
+
+          if (
+            overlappingAppointments.some((appointment) => {
+              if (appointment.status === "completed" && !showCompletedAppointments) return false;
+              if (appointment.status === "no_show" && !showNoShowAppointments) return false;
+              return true;
+            })
+          ) {
+            hasVisibleAppointment = true;
+            break;
+          }
+
+          if ((availableCandidatesByDayMinuteKey.get(bucketDayMinuteKey) || []).length > 0) {
+            hasAvailableSlot = true;
+          }
+        }
+
+        if (!hasVisibleAppointment && !hasAvailableSlot) {
+          currentRangeKeys.push(dayMinuteKeyLocal(dayKey, minuteOfDay));
+        } else {
+          flushRange();
+        }
+      }
+
+      flushRange();
+    }
+
+    return rangesByDayMinuteKey;
+  }, [
+    dayListForTimeline,
+    dayTimeRows,
+    timelineStepMin,
+    appointmentsOverlappingByDayMinuteKey,
+    availableCandidatesByDayMinuteKey,
+    showCompletedAppointments,
+    showNoShowAppointments,
+  ]);
+  const weekCollapsedRangeByMinute = useMemo(() => {
+    const rangesByMinute = new Map<number, TimelineCollapsedRange>();
+    let currentRangeMinutes: number[] = [];
+
+    const flushRange = () => {
+      if (currentRangeMinutes.length > 1) {
+        const lastMinute = currentRangeMinutes[currentRangeMinutes.length - 1] ?? 0;
+        const endMinute = lastMinute + weekTimelineStepMin;
+        currentRangeMinutes.forEach((rowMinute, index) => {
+          rangesByMinute.set(rowMinute, {
+            isStart: index === 0,
+            endMinute,
+          });
+        });
+      }
+      currentRangeMinutes = [];
+    };
+
+    for (const minuteOfDay of weekTimeRows) {
+      let hasVisibleAppointment = false;
+      let hasAvailableSlot = false;
+      let hasInformationalState = false;
+
+      for (const day of dayListForTimeline) {
+        const dayKey = toDateKeyLocal(day);
+        const bucketMinutes = getTimelineBucketMinutes(minuteOfDay, weekTimelineStepMin, BOOKING_STEP_MIN);
+
+        if (blockingHolidayByDateKey.has(dayKey)) {
+          hasInformationalState = true;
+          break;
+        }
+
+        for (const bucketMinute of bucketMinutes) {
+          const bucketDayMinuteKey = dayMinuteKeyLocal(dayKey, bucketMinute);
+          const overlappingAppointments = appointmentsOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || [];
+
+          if (
+            overlappingAppointments.some((appointment) => {
+              if (appointment.status === "completed" && !showCompletedAppointments) return false;
+              if (appointment.status === "no_show" && !showNoShowAppointments) return false;
+              return true;
+            })
+          ) {
+            hasVisibleAppointment = true;
+            break;
+          }
+
+          if ((availableCandidatesByDayMinuteKey.get(bucketDayMinuteKey) || []).length > 0) {
+            hasAvailableSlot = true;
+          }
+
+          if ((timeOffOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || []).length > 0) {
+            hasInformationalState = true;
+            break;
+          }
+        }
+
+        if (hasVisibleAppointment || hasAvailableSlot || hasInformationalState) break;
+      }
+
+      if (!hasVisibleAppointment && !hasAvailableSlot && !hasInformationalState) {
+        currentRangeMinutes.push(minuteOfDay);
+      } else {
+        flushRange();
+      }
+    }
+
+    flushRange();
+    return rangesByMinute;
+  }, [
+    weekTimeRows,
+    dayListForTimeline,
+    weekTimelineStepMin,
+    blockingHolidayByDateKey,
+    appointmentsOverlappingByDayMinuteKey,
+    availableCandidatesByDayMinuteKey,
+    timeOffOverlappingByDayMinuteKey,
+    showCompletedAppointments,
+    showNoShowAppointments,
+  ]);
+  const weekDayEmployeeLabelByDateKey = useMemo(() => {
+    const labelsByDateKey = new Map<string, string>();
+
+    for (const day of dayListForTimeline) {
+      const dayKey = toDateKeyLocal(day);
+      const employeeIds = new Set<string>();
+
+      for (const minuteOfDay of weekTimeRows) {
+          const bucketMinutes = getTimelineBucketMinutes(minuteOfDay, weekTimelineStepMin, BOOKING_STEP_MIN);
+        for (const bucketMinute of bucketMinutes) {
+          const bucketDayMinuteKey = dayMinuteKeyLocal(dayKey, bucketMinute);
+
+          for (const appointment of appointmentsOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || []) {
+            if (appointment.status === "completed" && !showCompletedAppointments) continue;
+            if (appointment.status === "no_show" && !showNoShowAppointments) continue;
+            employeeIds.add(appointment.employeeId);
+          }
+
+          for (const candidate of availableCandidatesByDayMinuteKey.get(bucketDayMinuteKey) || []) {
+            employeeIds.add(candidate.employeeId);
+          }
+        }
+      }
+
+      labelsByDateKey.set(dayKey, getEmployeeCountLabelRu(employeeIds.size));
+    }
+
+    return labelsByDateKey;
+  }, [
+    dayListForTimeline,
+    weekTimeRows,
+    weekTimelineStepMin,
+    appointmentsOverlappingByDayMinuteKey,
+    availableCandidatesByDayMinuteKey,
+    showCompletedAppointments,
+    showNoShowAppointments,
+  ]);
   const dayTimeColumnWidth = 60;
   const dayEmployeeMinColumnWidth = visibleEmployees.length >= 4 ? 132 : 148;
 
@@ -1737,6 +2299,30 @@ export default function AppointmentsPageClient({
         .slice(0, 6),
     [calendarData?.timeOff, timeOffEmployeeFilterId, employeesById],
   );
+  const scheduleWorkdayOverridePreview: ScheduleWorkdayOverridePreviewItem[] = useMemo(
+    () =>
+      workdayOverrideCatalog
+        .filter((item) => (scheduleEmployeeId ? item.employeeId === scheduleEmployeeId : true))
+        .map((item) => ({
+          id: item.id,
+          employeeId: item.employeeId,
+          employeeLabel: employeesById.get(item.employeeId)?.name || "Сотрудник",
+          date: item.date,
+          dateLabel: formatHolidayDateLabelRu(item.date, false),
+          startMinute: item.startMinute,
+          endMinute: item.endMinute,
+          breakStartMinute: item.breakStartMinute ?? null,
+          breakEndMinute: item.breakEndMinute ?? null,
+          breakTitle: item.breakTitle || null,
+        }))
+        .sort((a, b) => {
+          const byDate = a.date.localeCompare(b.date);
+          if (byDate !== 0) return byDate;
+          return a.startMinute - b.startMinute;
+        })
+        .slice(0, 8),
+    [workdayOverrideCatalog, scheduleEmployeeId, employeesById],
+  );
   const orderedScheduleRows = useMemo(
     () =>
       [...scheduleRows].sort(
@@ -1752,6 +2338,16 @@ export default function AppointmentsPageClient({
     title: "Праздничный день",
     isRecurringYearly: false,
     isWorkingDayOverride: false,
+  });
+  const buildDefaultWorkdayOverrideForm = (employeeId = scheduleEmployeeId || visibleEmployees[0]?.id || employees[0]?.id || "") => ({
+    employeeId,
+    date: toDateKeyLocal(anchorDate),
+    startTime: minuteToInputTime(9 * 60),
+    endTime: minuteToInputTime(18 * 60),
+    breakEnabled: false,
+    breakStartTime: minuteToInputTime(13 * 60),
+    breakEndTime: minuteToInputTime(14 * 60),
+    breakTitle: "Перерыв",
   });
   const buildDefaultTimeOffForm = (employeeId = "all") => {
     const defaultDate = toDateKeyLocal(new Date());
@@ -1803,6 +2399,38 @@ export default function AppointmentsPageClient({
     setHolidayDialogOpen(true);
   };
 
+  const handleWorkdayOverrideDialogOpenChange = (open: boolean) => {
+    setWorkdayOverrideDialogOpen(open);
+    if (!open) {
+      setWorkdayOverrideDialogMode("create");
+      setEditingWorkdayOverrideId(null);
+      setWorkdayOverrideForm(buildDefaultWorkdayOverrideForm());
+    }
+  };
+
+  const openCreateWorkdayOverrideDialog = (employeeId = scheduleEmployeeId || visibleEmployees[0]?.id || employees[0]?.id || "") => {
+    setWorkdayOverrideDialogMode("create");
+    setEditingWorkdayOverrideId(null);
+    setWorkdayOverrideForm(buildDefaultWorkdayOverrideForm(employeeId));
+    setWorkdayOverrideDialogOpen(true);
+  };
+
+  const openEditWorkdayOverrideDialog = (item: ScheduleWorkdayOverridePreviewItem) => {
+    setWorkdayOverrideDialogMode("edit");
+    setEditingWorkdayOverrideId(item.id);
+    setWorkdayOverrideForm({
+      employeeId: item.employeeId,
+      date: item.date,
+      startTime: minuteToInputTime(item.startMinute),
+      endTime: minuteToInputTime(item.endMinute),
+      breakEnabled: item.breakStartMinute !== null && item.breakEndMinute !== null,
+      breakStartTime: minuteToInputTime(item.breakStartMinute ?? 13 * 60),
+      breakEndTime: minuteToInputTime(item.breakEndMinute ?? 14 * 60),
+      breakTitle: item.breakTitle || "Перерыв",
+    });
+    setWorkdayOverrideDialogOpen(true);
+  };
+
   const handleTimeOffDialogOpenChange = (open: boolean) => {
     setTimeOffDialogOpen(open);
     if (!open) {
@@ -1840,12 +2468,15 @@ export default function AppointmentsPageClient({
     setEmployeeForm({
       name: "",
       specialty: "",
+      photoUrl: "",
+      description: "",
       slotDurationMin: FALLBACK_APPOINTMENT_DURATION_MIN,
       color: getNextEmployeeColor(employees),
       compensationType: "percent",
       compensationValue: 0,
     });
-    setEmployeeCompensationValueInput("0");
+    setEmployeeSlotDurationInput(String(FALLBACK_APPOINTMENT_DURATION_MIN));
+    setEmployeeCompensationValueInput("");
     setEmployeeDialogOpen(true);
   };
 
@@ -1857,12 +2488,15 @@ export default function AppointmentsPageClient({
     setEmployeeForm({
       name: employee.name || "",
       specialty: employee.specialty || "",
+      photoUrl: employee.photoUrl || "",
+      description: employee.description || "",
       slotDurationMin: employee.slotDurationMin || FALLBACK_APPOINTMENT_DURATION_MIN,
       color: employee.color || getEmployeeColorFallback(employee.id),
       compensationType: nextCompensationType,
       compensationValue: nextCompensationValue,
     });
-    setEmployeeCompensationValueInput(String(nextCompensationValue));
+    setEmployeeSlotDurationInput(String(employee.slotDurationMin || FALLBACK_APPOINTMENT_DURATION_MIN));
+    setEmployeeCompensationValueInput(formatOptionalMoneyInput(nextCompensationValue));
     setEmployeeDialogOpen(true);
   };
 
@@ -1900,6 +2534,9 @@ export default function AppointmentsPageClient({
     setAppointmentDialogMode("create");
     setAppointmentStatusDraft("scheduled");
     setAppointmentForm({
+      appointmentType: "primary",
+      clientId: null,
+      serviceId: null,
       clientName: normalizedPrefill.clientName,
       clientPhone: normalizedPrefill.clientPhone,
       clientIin: normalizedPrefill.clientIin,
@@ -1909,9 +2546,11 @@ export default function AppointmentsPageClient({
       prepaidAmount: 0,
       prepaidPaymentMethod: "kaspi_transfer",
     });
-    setAppointmentServiceAmountInput("0");
-    setAppointmentPrepaidAmountInput("0");
+    setAppointmentDurationInput(String(draftDuration));
+    setAppointmentServiceAmountInput("");
+    setAppointmentPrepaidAmountInput("");
     setSlotAvailabilityDurationMin(draftDuration);
+    setAppointmentClientDetailsOpen(false);
     setAppointmentDialogOpen(true);
   };
 
@@ -1928,8 +2567,11 @@ export default function AppointmentsPageClient({
       endsAt: appointment.endsAt,
     });
     setAppointmentForm({
+      appointmentType: (appointment.appointmentType as BookingAppointmentType) || "primary",
+      clientId: appointment.clientId || null,
+      serviceId: appointment.serviceId || null,
       clientName: appointment.clientName || "",
-      clientPhone: appointment.clientPhone || "",
+      clientPhone: toAppointmentPhoneInputValue(appointment.clientPhone),
       clientIin: appointment.clientIin || "",
       clientComment: appointment.clientComment || "",
       durationMin,
@@ -1937,8 +2579,17 @@ export default function AppointmentsPageClient({
       prepaidAmount: appointment.prepaidAmount || 0,
       prepaidPaymentMethod: (appointment.prepaidPaymentMethod as BookingPaymentMethod) || "kaspi_transfer",
     });
-    setAppointmentServiceAmountInput(String(Math.max(0, Math.round(appointment.serviceAmount || 0))));
-    setAppointmentPrepaidAmountInput(String(Math.max(0, Math.round(appointment.prepaidAmount || 0))));
+    setAppointmentDurationInput(String(durationMin));
+    setAppointmentServiceAmountInput(formatOptionalMoneyInput(appointment.serviceAmount));
+    setAppointmentPrepaidAmountInput(formatOptionalMoneyInput(appointment.prepaidAmount));
+    setAppointmentClientDetailsOpen(
+      Boolean(
+        appointment.clientId ||
+        appointment.clientName ||
+        appointment.clientPhone ||
+        appointment.clientIin,
+      ),
+    );
     setAppointmentDialogOpen(true);
   };
 
@@ -1951,8 +2602,10 @@ export default function AppointmentsPageClient({
       setSlotDraft(null);
       setSlotAvailabilityDurationMin(FALLBACK_APPOINTMENT_DURATION_MIN);
       setResizingAppointmentDraft(null);
-      setAppointmentServiceAmountInput("0");
-      setAppointmentPrepaidAmountInput("0");
+      setAppointmentDurationInput(String(FALLBACK_APPOINTMENT_DURATION_MIN));
+      setAppointmentServiceAmountInput("");
+      setAppointmentPrepaidAmountInput("");
+      setAppointmentClientDetailsOpen(false);
     }
   };
 
@@ -1964,23 +2617,222 @@ export default function AppointmentsPageClient({
       setEmployeeForm({
         name: "",
         specialty: "",
+        photoUrl: "",
+        description: "",
         slotDurationMin: FALLBACK_APPOINTMENT_DURATION_MIN,
         color: getNextEmployeeColor(employees),
         compensationType: "percent",
         compensationValue: 0,
       });
-      setEmployeeCompensationValueInput("0");
+      setEmployeeSlotDurationInput(String(FALLBACK_APPOINTMENT_DURATION_MIN));
+      setEmployeeCompensationValueInput("");
     }
+  };
+
+  const openCreateServiceDialog = () => {
+    setServiceDialogMode("create");
+    setEditingServiceId(null);
+    setServiceForm(buildDefaultServiceForm(employees));
+    setServicePriceDialogOpen(false);
+    setServiceDialogOpen(true);
+  };
+
+  const openEditServiceDialog = (service: BookingService) => {
+    setServiceDialogMode("edit");
+    setEditingServiceId(service.id);
+    setServiceForm(buildDefaultServiceForm(employees, service));
+    setServicePriceDialogOpen(false);
+    setServiceDialogOpen(true);
+  };
+
+  const handleServiceDialogOpenChange = (open: boolean) => {
+    setServiceDialogOpen(open);
+    if (!open) {
+      setServiceDialogMode("create");
+      setEditingServiceId(null);
+      setServiceForm(buildDefaultServiceForm(employees));
+      setServicePriceDialogOpen(false);
+    }
+  };
+
+  const updateServicePriceRow = (
+    employeeId: string,
+    updater: (row: ServicePriceEditorRow) => ServicePriceEditorRow,
+  ) => {
+    setServiceForm((prev) => ({
+      ...prev,
+      employeePrices: prev.employeePrices.map((row) => (row.employeeId === employeeId ? updater(row) : row)),
+    }));
+  };
+
+  const handleServicePriceToggle = (employeeId: string, enabled: boolean) => {
+    setServiceForm((prev) => ({
+      ...prev,
+      employeePrices: prev.employeePrices.map((row) => {
+        if (row.employeeId !== employeeId) return row;
+        const fallbackPrice = row.price > 0 ? row.price : prev.basePrice;
+        return {
+          ...row,
+          enabled,
+          price: enabled ? fallbackPrice : row.price,
+          priceInput: enabled ? (row.priceInput || formatOptionalMoneyInput(fallbackPrice)) : row.priceInput,
+        };
+      }),
+    }));
+  };
+
+  const handleServicePersonalPriceToggle = (checked: boolean) => {
+    if (checked) {
+      setServicePriceDialogOpen(true);
+      return;
+    }
+
+    setServiceForm((prev) => ({
+      ...prev,
+      employeePrices: prev.employeePrices.map((row) => ({ ...row, enabled: false })),
+    }));
+    setServicePriceDialogOpen(false);
+  };
+
+  const handleServicePriceCompensationTypeChange = (
+    employeeId: string,
+    compensationType: BookingCompensationType,
+  ) => {
+    updateServicePriceRow(employeeId, (row) => {
+      const compensationValue = clampCompensationValue(row.compensationValue, compensationType);
+      return {
+        ...row,
+        compensationType,
+        compensationValue,
+        compensationValueInput: formatOptionalMoneyInput(compensationValue),
+      };
+    });
+  };
+
+  const handleServicePriceInputChange = (employeeId: string, raw: string) => {
+    const digits = digitsOnly(raw);
+    updateServicePriceRow(employeeId, (row) => {
+      if (!digits) {
+        return {
+          ...row,
+          price: 0,
+          priceInput: "",
+        };
+      }
+
+      const next = Math.max(0, Math.round(Number(digits) || 0));
+      return {
+        ...row,
+        price: next,
+        priceInput: String(next),
+      };
+    });
+  };
+
+  const handleServicePriceCompensationValueInputChange = (employeeId: string, raw: string) => {
+    const digits = digitsOnly(raw);
+    updateServicePriceRow(employeeId, (row) => {
+      if (!digits) {
+        return {
+          ...row,
+          compensationValue: 0,
+          compensationValueInput: "",
+        };
+      }
+
+      const next = clampCompensationValue(Number(digits), row.compensationType);
+      return {
+        ...row,
+        compensationValue: next,
+        compensationValueInput: String(next),
+      };
+    });
   };
 
   const patchAppointmentForm = (patch: Partial<typeof appointmentForm>) => {
     setAppointmentForm((prev) => ({ ...prev, ...patch }));
   };
 
-  const normalizeCurrencyInput = (raw: string) => raw.replace(/\D/g, "");
+  const handleAppointmentClientChange = (nextClientId: string | null) => {
+    if (!nextClientId) {
+      patchAppointmentForm({ clientId: null });
+      setAppointmentClientDetailsOpen(false);
+      return;
+    }
+
+    const bookingClient = clientsById.get(nextClientId);
+    if (!bookingClient) {
+      patchAppointmentForm({ clientId: null });
+      setAppointmentClientDetailsOpen(false);
+      return;
+    }
+
+    patchAppointmentForm({
+      clientId: bookingClient.id,
+      clientName: bookingClient.fullName,
+      clientPhone: toAppointmentPhoneInputValue(bookingClient.phone),
+      clientIin: bookingClient.iin || "",
+    });
+    setAppointmentClientDetailsOpen(true);
+  };
+
+  const handleAppointmentClientCreate = () => {
+    patchAppointmentForm({
+      clientId: null,
+      clientName: "",
+      clientPhone: "",
+      clientIin: "",
+    });
+    setAppointmentClientDetailsOpen(true);
+  };
+
+  const handleAppointmentServiceChange = (nextServiceIdRaw: string) => {
+    const nextServiceId = nextServiceIdRaw || null;
+    if (!nextServiceId) {
+      patchAppointmentForm({ serviceId: null });
+      return;
+    }
+
+    const selectedOption = appointmentServiceOptions.find((item) => item.value === nextServiceId);
+    const selectedService = servicesById.get(nextServiceId);
+    const nextAppointmentType =
+      inferAppointmentTypeFromServiceType(selectedService?.serviceType) || appointmentForm.appointmentType;
+    const nextDurationMin = selectedOption?.durationMin
+      ? alignDurationToStep(selectedOption.durationMin, appointmentDurationStepMin, appointmentDurationStepMin)
+      : clampAppointmentDurationMin(appointmentForm.durationMin, appointmentDurationStepMin);
+
+    setAppointmentDurationInput(String(nextDurationMin));
+    if (appointmentDialogMode === "create") {
+      setSlotAvailabilityDurationMin(nextDurationMin);
+    }
+
+    if (selectedOption?.price && selectedOption.price > 0) {
+      setAppointmentServiceAmountInput(String(selectedOption.price));
+      patchAppointmentForm({
+        serviceId: nextServiceId,
+        appointmentType: nextAppointmentType,
+        durationMin: nextDurationMin,
+        serviceAmount: selectedOption.price,
+      });
+    } else {
+      patchAppointmentForm({
+        serviceId: nextServiceId,
+        appointmentType: nextAppointmentType,
+        durationMin: nextDurationMin,
+      });
+    }
+
+    setSlotDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        endsAt: addMinutesToIso(prev.startsAt, nextDurationMin),
+      };
+    });
+  };
 
   const handleAppointmentServiceAmountInputChange = (raw: string) => {
-    const digits = normalizeCurrencyInput(raw);
+    const digits = digitsOnly(raw);
     if (!digits) {
       setAppointmentServiceAmountInput("");
       patchAppointmentForm({ serviceAmount: 0 });
@@ -1993,7 +2845,7 @@ export default function AppointmentsPageClient({
   };
 
   const handleAppointmentPrepaidAmountInputChange = (raw: string) => {
-    const digits = normalizeCurrencyInput(raw);
+    const digits = digitsOnly(raw);
     if (!digits) {
       setAppointmentPrepaidAmountInput("");
       patchAppointmentForm({ prepaidAmount: 0 });
@@ -2005,17 +2857,9 @@ export default function AppointmentsPageClient({
     patchAppointmentForm({ prepaidAmount: next });
   };
 
-  const handleAppointmentServiceAmountInputBlur = () => {
-    if (appointmentServiceAmountInput.trim() !== "") return;
-    setAppointmentServiceAmountInput("0");
-    patchAppointmentForm({ serviceAmount: 0 });
-  };
+  const handleAppointmentServiceAmountInputBlur = () => undefined;
 
-  const handleAppointmentPrepaidAmountInputBlur = () => {
-    if (appointmentPrepaidAmountInput.trim() !== "") return;
-    setAppointmentPrepaidAmountInput("0");
-    patchAppointmentForm({ prepaidAmount: 0 });
-  };
+  const handleAppointmentPrepaidAmountInputBlur = () => undefined;
 
   const startEditingAppointmentFromDialog = () => {
     if (!activeAppointmentId) return;
@@ -2023,14 +2867,54 @@ export default function AppointmentsPageClient({
   };
 
   const handleAppointmentSlotEmployeeChange = (nextEmployeeId: string) => {
-    const nextDurationMin =
+    let nextDurationMin =
       appointmentDialogMode === "create"
         ? getEmployeeDefaultDurationMin(nextEmployeeId)
         : clampAppointmentDurationMin(appointmentForm.durationMin, BOOKING_STEP_MIN);
+    setAppointmentDurationInput(String(nextDurationMin));
     patchAppointmentForm({ durationMin: nextDurationMin });
     if (appointmentDialogMode === "create") {
       setSlotAvailabilityDurationMin(nextDurationMin);
     }
+
+    if (appointmentForm.serviceId) {
+      const service = servicesById.get(appointmentForm.serviceId);
+      const customPrice = service?.prices.find(
+        (item) => item.employeeId === nextEmployeeId && item.isActive && item.price > 0,
+      );
+      const nextServiceAmount = customPrice?.price || service?.basePrice || 0;
+
+      if (service && nextServiceAmount > 0) {
+        const nextAppointmentType =
+          inferAppointmentTypeFromServiceType(service?.serviceType) || appointmentForm.appointmentType;
+        nextDurationMin = alignDurationToStep(
+          service?.durationMin,
+          appointmentDurationStepMin,
+          appointmentDurationStepMin,
+        );
+        setAppointmentDurationInput(String(nextDurationMin));
+        if (appointmentDialogMode === "create") {
+          setSlotAvailabilityDurationMin(nextDurationMin);
+        }
+        setAppointmentServiceAmountInput(String(nextServiceAmount));
+        patchAppointmentForm({
+          serviceId: appointmentForm.serviceId,
+          appointmentType: nextAppointmentType,
+          durationMin: nextDurationMin,
+          serviceAmount: nextServiceAmount,
+        });
+      } else {
+        setAppointmentServiceAmountInput("");
+        patchAppointmentForm({
+          serviceId: null,
+          serviceAmount: 0,
+        });
+        toast({
+          title: "Для выбранного сотрудника услуга недоступна",
+        });
+      }
+    }
+
     setSlotDraft((prev) => {
       if (!prev) return prev;
       return {
@@ -2058,6 +2942,7 @@ export default function AppointmentsPageClient({
 
   const handleAppointmentDurationPresetSelect = (preset: number) => {
     const nextDuration = alignDurationToStep(preset, appointmentDurationStepMin, appointmentDurationStepMin);
+    setAppointmentDurationInput(String(nextDuration));
     patchAppointmentForm({ durationMin: nextDuration });
     if (appointmentDialogMode === "create") {
       setSlotAvailabilityDurationMin(nextDuration);
@@ -2065,11 +2950,34 @@ export default function AppointmentsPageClient({
   };
 
   const handleAppointmentDurationInputChange = (raw: string) => {
-    const nextDuration = alignDurationToStep(raw, appointmentDurationStepMin, appointmentDurationStepMin);
+    const digits = digitsOnly(raw);
+    setAppointmentDurationInput(digits);
+    if (!digits) return;
+
+    const nextDurationRaw = Number(digits);
+    if (!Number.isFinite(nextDurationRaw)) return;
+    if (nextDurationRaw < appointmentDurationStepMin || nextDurationRaw > 12 * 60) return;
+    if (nextDurationRaw % appointmentDurationStepMin !== 0) return;
+
+    patchAppointmentForm({ durationMin: nextDurationRaw });
+    if (appointmentDialogMode === "create") {
+      setSlotAvailabilityDurationMin(nextDurationRaw);
+    }
+  };
+
+  const handleAppointmentDurationInputBlur = () => {
+    const digits = digitsOnly(appointmentDurationInput);
+    if (!digits) {
+      setAppointmentDurationInput(String(appointmentForm.durationMin));
+      return;
+    }
+
+    const nextDuration = alignDurationToStep(digits, appointmentDurationStepMin, appointmentDurationStepMin);
+    setAppointmentDurationInput(String(nextDuration));
+    patchAppointmentForm({ durationMin: nextDuration });
     if (appointmentDialogMode === "create") {
       setSlotAvailabilityDurationMin(nextDuration);
     }
-    patchAppointmentForm({ durationMin: nextDuration });
   };
 
   const advanceAppointmentStatus = async (appointment: BookingAppointment) => {
@@ -2127,18 +3035,84 @@ export default function AppointmentsPageClient({
     );
   };
 
+  const updateScheduleRows = (
+    weekdays: number[],
+    updater: (row: ScheduleDayRow) => ScheduleDayRow,
+  ) => {
+    if (!weekdays.length) return;
+
+    const weekdaySet = new Set(weekdays);
+    setScheduleRows((prev) =>
+      prev.map((row) => (weekdaySet.has(row.weekday) ? updater(row) : row)),
+    );
+  };
+
   const handleWorkdayToggle = (weekday: number, enabled: boolean) => {
     if (enabled) {
       updateScheduleRow(weekday, { workEnabled: true });
       return;
     }
-    updateScheduleRow(weekday, {
-      workEnabled: false,
-      breakEnabled: false,
-      breakStart: minuteToInputTime(13 * 60),
-      breakEnd: minuteToInputTime(14 * 60),
-      breakTitle: "Перерыв",
-    });
+    updateScheduleRow(weekday, buildDisabledScheduleRowPatch());
+  };
+
+  const applyScheduleWeekdayPreset = () => {
+    setScheduleRows(
+      WEEKDAY_EDITOR_ORDER.map((weekday) =>
+        weekday >= 1 && weekday <= 5
+          ? {
+              weekday,
+              workEnabled: true,
+              workStart: minuteToInputTime(9 * 60),
+              workEnd: minuteToInputTime(18 * 60),
+              breakEnabled: false,
+              breakStart: minuteToInputTime(13 * 60),
+              breakEnd: minuteToInputTime(14 * 60),
+              breakTitle: "Перерыв",
+            }
+          : {
+              weekday,
+              workEnabled: false,
+              workStart: minuteToInputTime(9 * 60),
+              workEnd: minuteToInputTime(18 * 60),
+              breakEnabled: false,
+              breakStart: minuteToInputTime(13 * 60),
+              breakEnd: minuteToInputTime(14 * 60),
+              breakTitle: "Перерыв",
+            },
+      ),
+    );
+    toast({ title: "Установлен график по будням" });
+  };
+
+  const applyScheduleLunchPreset = () => {
+    const hasAnyWorkday = scheduleRows.some((row) => row.workEnabled);
+    if (!hasAnyWorkday) {
+      toast({ title: "Сначала включите хотя бы один рабочий день" });
+      return;
+    }
+
+    setScheduleRows((prev) =>
+      prev.map((row) =>
+        row.workEnabled
+          ? {
+              ...row,
+              breakEnabled: true,
+              breakStart: minuteToInputTime(13 * 60),
+              breakEnd: minuteToInputTime(14 * 60),
+              breakTitle: row.breakTitle.trim() || "Перерыв",
+            }
+          : row,
+      ),
+    );
+    toast({ title: "Стандартный обед добавлен во все рабочие дни" });
+  };
+
+  const resetScheduleEditor = () => {
+    if (!scheduleEmployeeId) return;
+    setScheduleRows(
+      buildScheduleEditorRows(scheduleEmployeeId, calendarData?.workRules || [], calendarData?.breakRules || []),
+    );
+    toast({ title: "Несохранённые изменения сброшены" });
   };
 
   const submitSchedule = async () => {
@@ -2151,17 +3125,20 @@ export default function AppointmentsPageClient({
     const breakRules: BookingRuleRangeInput[] = [];
 
     for (const row of scheduleRows) {
+      let workStartMinute: number | null = null;
+      let workEndMinute: number | null = null;
+
       if (row.workEnabled) {
-        const startMinute = inputTimeToMinute(row.workStart);
-        const endMinute = inputTimeToMinute(row.workEnd);
-        if (startMinute === null || endMinute === null || endMinute <= startMinute) {
+        workStartMinute = inputTimeToMinute(row.workStart);
+        workEndMinute = inputTimeToMinute(row.workEnd);
+        if (workStartMinute === null || workEndMinute === null || workEndMinute <= workStartMinute) {
           toast({ title: `Проверьте рабочее время: ${WEEKDAY_LONG_RU[row.weekday]}` });
           return;
         }
         workRules.push({
           weekday: row.weekday,
-          startMinute,
-          endMinute,
+          startMinute: workStartMinute,
+          endMinute: workEndMinute,
           isActive: true,
         });
       }
@@ -2171,6 +3148,15 @@ export default function AppointmentsPageClient({
         const endMinute = inputTimeToMinute(row.breakEnd);
         if (startMinute === null || endMinute === null || endMinute <= startMinute) {
           toast({ title: `Проверьте перерыв: ${WEEKDAY_LONG_RU[row.weekday]}` });
+          return;
+        }
+        if (
+          workStartMinute === null ||
+          workEndMinute === null ||
+          startMinute < workStartMinute ||
+          endMinute > workEndMinute
+        ) {
+          toast({ title: `Перерыв должен быть внутри рабочего времени: ${WEEKDAY_LONG_RU[row.weekday]}` });
           return;
         }
         breakRules.push({
@@ -2339,7 +3325,7 @@ export default function AppointmentsPageClient({
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaY = moveEvent.clientY - startClientY;
-      const resizeStepPx = Math.max(2, (slotHeightPx * BOOKING_STEP_MIN) / TIMELINE_STEP_MIN);
+      const resizeStepPx = Math.max(2, (slotHeightPx * BOOKING_STEP_MIN) / timelineStepMin);
       const deltaSteps = Math.round(deltaY / resizeStepPx);
       const candidateDurationMin = alignDurationToStep(
         baseDurationMin + deltaSteps * BOOKING_STEP_MIN,
@@ -2386,18 +3372,31 @@ export default function AppointmentsPageClient({
       return;
     }
     const durationMin = clampAppointmentDurationMin(appointmentForm.durationMin, BOOKING_STEP_MIN);
+    if (!appointmentClientDetailsOpen && !appointmentForm.clientId) {
+      toast({ title: "Выберите клиента или нажмите «Создать»" });
+      return;
+    }
     if (!appointmentForm.clientName.trim()) {
       toast({ title: "Укажите имя клиента" });
       return;
     }
     const serviceAmount = Math.max(0, Math.round(Number(appointmentForm.serviceAmount) || 0));
     const prepaidAmount = Math.max(0, Math.round(Number(appointmentForm.prepaidAmount) || 0));
+    if (serviceAmount <= 0) {
+      toast({ title: "Укажите стоимость приема" });
+      return;
+    }
     if (prepaidAmount > 0 && !appointmentForm.prepaidPaymentMethod) {
       toast({ title: "Выберите способ оплаты для предоплаты" });
       return;
     }
     if (serviceAmount > 0 && prepaidAmount > serviceAmount) {
       toast({ title: "Предоплата не может превышать стоимость приема" });
+      return;
+    }
+    const clientPhone = serializeAppointmentPhone(appointmentForm.clientPhone);
+    if (appointmentForm.clientPhone.trim() && !clientPhone) {
+      toast({ title: "Телефон должен содержать 11 цифр после +7" });
       return;
     }
     const iinNormalized = normalizeIin(appointmentForm.clientIin);
@@ -2409,6 +3408,10 @@ export default function AppointmentsPageClient({
       toast({ title: appointmentIinPreview.error });
       return;
     }
+    const clientBirthDate =
+      appointmentIinPreview && !("error" in appointmentIinPreview) ? appointmentIinPreview.birthDate : null;
+    const clientGender =
+      appointmentIinPreview && !("error" in appointmentIinPreview) ? appointmentIinPreview.gender : null;
 
     const validSelectedSlot = buildCreateAppointmentCandidatesAtStart({
       startsAtIso: selectedSlot.startsAt,
@@ -2418,6 +3421,7 @@ export default function AppointmentsPageClient({
       ignoreAppointmentId: activeAppointmentId || undefined,
       workRulesByEmployee,
       breakRulesByEmployee,
+      workdayOverrideByEmployeeDateKey,
       blockingHolidayByDateKey,
       holidayWorkOverrideDateKeys,
       timeOff: calendarData?.timeOff || [],
@@ -2431,17 +3435,71 @@ export default function AppointmentsPageClient({
 
     setAppointmentSaving(true);
     try {
+      let resolvedClientId = appointmentForm.clientId || null;
+      const clientPayload = {
+        fullName: appointmentForm.clientName.trim(),
+        phone: clientPhone || undefined,
+        iin: iinNormalized || undefined,
+        birthDate: clientBirthDate,
+        gender: clientGender,
+      };
+
+      const syncExistingClient = async (clientId: string) => {
+        const existingClient = clientsById.get(clientId);
+        if (!existingClient) return clientId;
+
+        const hasChanges =
+          existingClient.fullName !== clientPayload.fullName ||
+          (existingClient.phone || null) !== (clientPayload.phone || null) ||
+          (existingClient.iin || null) !== (clientPayload.iin || null) ||
+          (existingClient.birthDate || null) !== (clientPayload.birthDate || null) ||
+          (existingClient.gender || null) !== (clientPayload.gender || null);
+
+        if (hasChanges) {
+          await updateBookingClient(clientId, {
+            fullName: clientPayload.fullName,
+            phone: clientPayload.phone || null,
+            iin: clientPayload.iin || null,
+            birthDate: clientPayload.birthDate,
+            gender: clientPayload.gender,
+          }, requestContext);
+        }
+
+        return clientId;
+      };
+
+      if (resolvedClientId) {
+        resolvedClientId = await syncExistingClient(resolvedClientId);
+      } else {
+        const matchedClient =
+          (clientPayload.iin ? clients.find((item) => item.iin === clientPayload.iin) : null) ||
+          (clientPayload.phone ? clients.find((item) => item.phone === clientPayload.phone) : null) ||
+          null;
+
+        if (matchedClient) {
+          resolvedClientId = await syncExistingClient(matchedClient.id);
+        } else {
+          const result = await createBookingClient(clientPayload, requestContext);
+          resolvedClientId = result.client.id;
+        }
+      }
+
       const computedEndsAt = validSelectedSlot.endsAt;
       if (activeAppointmentId) {
         await updateBookingAppointment(activeAppointmentId, {
           employeeId: selectedSlot.employeeId,
+          clientId: resolvedClientId || undefined,
+          serviceId: appointmentForm.serviceId || undefined,
           startsAt: selectedSlot.startsAt,
           endsAt: computedEndsAt,
           durationMin,
           status: appointmentStatusDraft,
+          appointmentType: appointmentForm.appointmentType,
           clientName: appointmentForm.clientName.trim(),
-          clientPhone: appointmentForm.clientPhone.trim() || undefined,
+          clientPhone: clientPhone || undefined,
           clientIin: iinNormalized || undefined,
+          clientBirthDate: clientBirthDate || undefined,
+          clientGender: clientGender || undefined,
           clientComment: appointmentForm.clientComment.trim() || undefined,
           serviceAmount,
           prepaidAmount,
@@ -2452,12 +3510,17 @@ export default function AppointmentsPageClient({
       } else {
         await createBookingAppointment({
           employeeId: selectedSlot.employeeId,
+          clientId: resolvedClientId || undefined,
+          serviceId: appointmentForm.serviceId || undefined,
           startsAt: selectedSlot.startsAt,
           endsAt: computedEndsAt,
           durationMin,
+          appointmentType: appointmentForm.appointmentType,
           clientName: appointmentForm.clientName.trim(),
-          clientPhone: appointmentForm.clientPhone.trim() || undefined,
+          clientPhone: clientPhone || undefined,
           clientIin: iinNormalized || undefined,
+          clientBirthDate: clientBirthDate || undefined,
+          clientGender: clientGender || undefined,
           clientComment: appointmentForm.clientComment.trim() || undefined,
           source: normalizedPrefill.source,
           externalRef: normalizedPrefill.externalRef,
@@ -2513,6 +3576,8 @@ export default function AppointmentsPageClient({
         const result = await updateBookingEmployee(editingEmployeeId, {
           name: employeeForm.name.trim(),
           specialty: employeeForm.specialty.trim() || null,
+          photoUrl: employeeForm.photoUrl.trim() || null,
+          description: employeeForm.description.trim() || null,
           color: employeeForm.color,
           slotDurationMin,
           compensationType: employeeForm.compensationType,
@@ -2524,6 +3589,8 @@ export default function AppointmentsPageClient({
         const result = await createBookingEmployee({
           name: employeeForm.name.trim(),
           specialty: employeeForm.specialty.trim() || undefined,
+          photoUrl: employeeForm.photoUrl.trim() || undefined,
+          description: employeeForm.description.trim() || undefined,
           color: employeeForm.color,
           slotDurationMin,
           compensationType: employeeForm.compensationType,
@@ -2538,12 +3605,15 @@ export default function AppointmentsPageClient({
       setEmployeeForm({
         name: "",
         specialty: "",
+        photoUrl: "",
+        description: "",
         slotDurationMin: FALLBACK_APPOINTMENT_DURATION_MIN,
         color: getNextEmployeeColor(employees),
         compensationType: "percent",
         compensationValue: 0,
       });
-      setEmployeeCompensationValueInput("0");
+      setEmployeeSlotDurationInput(String(FALLBACK_APPOINTMENT_DURATION_MIN));
+      setEmployeeCompensationValueInput("");
       refreshCalendar();
     } catch (error) {
       toast({
@@ -2552,6 +3622,93 @@ export default function AppointmentsPageClient({
       });
     } finally {
       setEmployeeSaving(false);
+    }
+  };
+
+  const submitService = async () => {
+    if (!serviceForm.name.trim()) {
+      toast({ title: "Укажите название услуги" });
+      return;
+    }
+    const basePrice = Math.max(0, Math.round(Number(serviceForm.basePrice) || 0));
+    const durationMin = Number(serviceForm.durationInput);
+    if (
+      !Number.isFinite(durationMin) ||
+      durationMin < BOOKING_STEP_MIN ||
+      durationMin > 720 ||
+      durationMin % BOOKING_STEP_MIN !== 0
+    ) {
+      toast({ title: "Длительность должна быть от 5 до 720 минут и кратной 5" });
+      return;
+    }
+
+    const employeePrices = serviceForm.employeePrices.map((row) => ({
+      employeeId: row.employeeId,
+      price: row.enabled ? row.price : 0,
+      compensationType: row.compensationType,
+      compensationValue: row.compensationValue,
+      isActive: row.enabled,
+    }));
+    const activePriceCount = employeePrices.filter((item) => item.isActive && item.price > 0).length;
+
+    if (serviceForm.isActive && basePrice <= 0 && activePriceCount === 0) {
+      toast({
+        title: "Для активной услуги нужна базовая цена или персональная цена хотя бы у одного сотрудника",
+      });
+      return;
+    }
+
+    if (serviceForm.employeePrices.some((row) => row.enabled && row.price <= 0)) {
+      toast({
+        title: "У всех включённых сотрудников должна быть цена больше нуля",
+      });
+      return;
+    }
+
+    setServiceSaving(true);
+    try {
+      if (serviceDialogMode === "edit") {
+        if (!editingServiceId) {
+          toast({ title: "Услуга для редактирования не выбрана" });
+          return;
+        }
+
+        const result = await updateBookingService(editingServiceId, {
+          name: serviceForm.name.trim(),
+          basePrice,
+          durationMin,
+          category: serviceForm.category.trim() || null,
+          direction: serviceForm.direction.trim() || null,
+          serviceType: serviceForm.serviceType,
+          description: serviceForm.description.trim() || null,
+          isActive: serviceForm.isActive,
+          employeePrices,
+        }, requestContext);
+        toast({ title: `Услуга обновлена: ${result.service.name}` });
+      } else {
+        const result = await createBookingService({
+          name: serviceForm.name.trim(),
+          basePrice,
+          durationMin,
+          category: serviceForm.category.trim() || undefined,
+          direction: serviceForm.direction.trim() || undefined,
+          serviceType: serviceForm.serviceType,
+          description: serviceForm.description.trim() || undefined,
+          isActive: serviceForm.isActive,
+          employeePrices,
+        }, requestContext);
+        toast({ title: `Услуга создана: ${result.service.name}` });
+      }
+
+      handleServiceDialogOpenChange(false);
+      refreshCalendar();
+    } catch (error) {
+      toast({
+        title: serviceDialogMode === "edit" ? "Ошибка обновления услуги" : "Ошибка создания услуги",
+        description: getErrorMessage(error),
+      });
+    } finally {
+      setServiceSaving(false);
     }
   };
 
@@ -2601,6 +3758,78 @@ export default function AppointmentsPageClient({
       });
     } finally {
       setHolidaySaving(false);
+    }
+  };
+
+  const submitWorkdayOverride = async () => {
+    if (!workdayOverrideForm.employeeId) {
+      toast({ title: "Выберите сотрудника" });
+      return;
+    }
+
+    const date = dateOnlyFromInputOrIso(workdayOverrideForm.date);
+    const startMinute = inputTimeToMinute(workdayOverrideForm.startTime);
+    const endMinute = inputTimeToMinute(workdayOverrideForm.endTime);
+    const breakStartMinute = workdayOverrideForm.breakEnabled ? inputTimeToMinute(workdayOverrideForm.breakStartTime) : null;
+    const breakEndMinute = workdayOverrideForm.breakEnabled ? inputTimeToMinute(workdayOverrideForm.breakEndTime) : null;
+
+    if (!date || startMinute === null || endMinute === null || endMinute <= startMinute) {
+      toast({ title: "Проверьте дату и рабочее время" });
+      return;
+    }
+    if (
+      workdayOverrideForm.breakEnabled &&
+      (breakStartMinute === null ||
+        breakEndMinute === null ||
+        breakEndMinute <= breakStartMinute ||
+        breakStartMinute < startMinute ||
+        breakEndMinute > endMinute)
+    ) {
+      toast({ title: "Проверьте разовый перерыв: он должен быть внутри рабочего времени" });
+      return;
+    }
+
+    setWorkdayOverrideSaving(true);
+    try {
+      const payload = {
+        employeeId: workdayOverrideForm.employeeId,
+        date,
+        startMinute,
+        endMinute,
+        breakStartMinute,
+        breakEndMinute,
+        breakTitle: workdayOverrideForm.breakEnabled ? workdayOverrideForm.breakTitle.trim() || "Перерыв" : null,
+      };
+
+      if (workdayOverrideDialogMode === "edit") {
+        if (!editingWorkdayOverrideId) {
+          toast({ title: "Конкретный рабочий день для редактирования не выбран" });
+          return;
+        }
+        await updateBookingWorkdayOverride(editingWorkdayOverrideId, payload, requestContext);
+        toast({ title: "Конкретный рабочий день обновлён" });
+      } else {
+        await createBookingWorkdayOverride(payload, requestContext);
+        toast({ title: "Конкретный рабочий день добавлен" });
+      }
+
+      handleWorkdayOverrideDialogOpenChange(false);
+      refreshCalendar();
+    } catch (error) {
+      const err = error as BookingApiError;
+      const isConflict = err.code === "WORKDAY_OVERRIDE_CONFLICT";
+      toast({
+        title: isConflict
+          ? "На эту дату уже есть рабочий день"
+          : workdayOverrideDialogMode === "edit"
+            ? "Ошибка обновления рабочего дня"
+            : "Ошибка добавления рабочего дня",
+        description: isConflict
+          ? "Измените существующий день или выберите другую дату."
+          : getErrorMessage(error),
+      });
+    } finally {
+      setWorkdayOverrideSaving(false);
     }
   };
 
@@ -2670,6 +3899,24 @@ export default function AppointmentsPageClient({
     }
   };
 
+  const confirmWorkdayOverrideDeletion = async () => {
+    if (!pendingWorkdayOverrideDeletion) return;
+    setWorkdayOverrideDeleting(true);
+    try {
+      await deleteBookingWorkdayOverride(pendingWorkdayOverrideDeletion.id, requestContext);
+      toast({ title: "Конкретный рабочий день удалён" });
+      setPendingWorkdayOverrideDeletion(null);
+      if (editingWorkdayOverrideId === pendingWorkdayOverrideDeletion.id) {
+        handleWorkdayOverrideDialogOpenChange(false);
+      }
+      refreshCalendar();
+    } catch (error) {
+      toast({ title: "Ошибка удаления рабочего дня", description: getErrorMessage(error) });
+    } finally {
+      setWorkdayOverrideDeleting(false);
+    }
+  };
+
   const confirmTimeOffDeletion = async () => {
     if (!pendingTimeOffDeletion) return;
     setTimeOffDeleting(true);
@@ -2727,81 +3974,23 @@ export default function AppointmentsPageClient({
   const daySlotHeightClass = "h-16";
   const weekSlotHeightClass = "min-h-10";
   const dayTimeRowClass = "flex h-16 items-start justify-end bg-background border-t px-2 pt-0.5 text-xs text-muted-foreground";
-  const weekTimeRowClass = "flex min-h-10 items-start justify-end bg-background border-t px-2 py-1 text-xs text-muted-foreground";
+  const weekTimeRowClass = "flex h-10 items-start justify-end bg-background border-t px-2 py-1 text-xs text-muted-foreground";
   const now = new Date();
   const nowDateKey = toDateKeyLocal(now);
   const nowMinuteOfDay = now.getHours() * 60 + now.getMinutes();
-  const timelineStartDayMs = dayListForTimeline[0]?.getTime() ?? anchorDate.getTime();
-  const isAutoScrollTimeRow = (minuteOfDay: number, durationMin = TIMELINE_STEP_MIN) =>
+  const isAutoScrollTimeRow = (minuteOfDay: number, durationMin = timelineStepMin) =>
     nowMinuteOfDay >= minuteOfDay && nowMinuteOfDay < minuteOfDay + durationMin;
-  const isCurrentTimelineSlot = (day: Date, minuteOfDay: number, durationMin = TIMELINE_STEP_MIN) =>
+  const isCurrentTimelineSlot = (day: Date, minuteOfDay: number, durationMin = timelineStepMin) =>
     toDateKeyLocal(day) === nowDateKey && nowMinuteOfDay >= minuteOfDay && nowMinuteOfDay < minuteOfDay + durationMin;
-
-  useEffect(() => {
-    if (contentTab !== "calendar" || view === "month") {
-      autoScrollKeyRef.current = null;
-      autoScrollInteractedRef.current = false;
-      timelineAnchorKeyRef.current = null;
-      return;
-    }
-
-    const timelineAnchorKey =
-      view === "day"
-        ? `day:${toDateKeyLocal(anchorDate)}`
-        : `week:${toDateKeyLocal(dayListForTimeline[0] || anchorDate)}`;
-
-    if (timelineAnchorKeyRef.current !== timelineAnchorKey) {
-      timelineAnchorKeyRef.current = timelineAnchorKey;
-      autoScrollKeyRef.current = null;
-      autoScrollInteractedRef.current = false;
-    }
-
-    if (
-      autoScrollKeyRef.current === timelineAnchorKey ||
-      autoScrollInteractedRef.current ||
-      typeof window === "undefined"
-    ) {
-      return;
-    }
-
-    const frameId = window.requestAnimationFrame(() => {
-      const currentRowAnchor = document.querySelector<HTMLElement>('[data-current-time-anchor="true"]');
-      if (!currentRowAnchor) return;
-      autoScrollSuppressUntilRef.current = Date.now() + 400;
-      currentRowAnchor.scrollIntoView({ block: "center", inline: "nearest" });
-      autoScrollKeyRef.current = timelineAnchorKey;
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [contentTab, view, anchorDate.getTime(), timelineStartDayMs]);
-
-  useEffect(() => {
-    if (contentTab !== "calendar" || view === "month" || typeof window === "undefined") return;
-
-    const markAutoScrollInteracted = () => {
-      if (Date.now() <= autoScrollSuppressUntilRef.current) return;
-      autoScrollInteractedRef.current = true;
-    };
-
-    window.addEventListener("scroll", markAutoScrollInteracted, { passive: true });
-    window.addEventListener("wheel", markAutoScrollInteracted, { passive: true });
-    window.addEventListener("touchmove", markAutoScrollInteracted, { passive: true });
-
-    return () => {
-      window.removeEventListener("scroll", markAutoScrollInteracted);
-      window.removeEventListener("wheel", markAutoScrollInteracted);
-      window.removeEventListener("touchmove", markAutoScrollInteracted);
-    };
-  }, [contentTab, view]);
 
   const renderDaySubSlotMarkers = (layout: "day" | "week") =>
     layout === "day" ? (
       <>
-        {Array.from({ length: Math.max(0, DAY_SUB_SLOT_COUNT - 1) }, (_, index) => (
+        {Array.from({ length: Math.max(0, daySubSlotCount - 1) }, (_, index) => (
           <span
             key={`day-sub-slot-divider-${index}`}
             className="pointer-events-none absolute inset-x-0 h-px bg-border/70"
-            style={{ top: `${((index + 1) * 100) / DAY_SUB_SLOT_COUNT}%` }}
+            style={{ top: `${((index + 1) * 100) / daySubSlotCount}%` }}
           />
         ))}
       </>
@@ -2816,8 +4005,11 @@ export default function AppointmentsPageClient({
       <div
         className="pointer-events-none absolute inset-y-0 left-0 z-0 w-6"
       >
-        <div className="grid h-full grid-rows-6 px-1 text-[8px] leading-none">
-          {Array.from({ length: DAY_SUB_SLOT_COUNT }, (_, index) => (
+        <div
+          className="grid h-full px-1 text-[8px] leading-none"
+          style={{ gridTemplateRows: `repeat(${daySubSlotCount}, minmax(0, 1fr))` }}
+        >
+          {Array.from({ length: daySubSlotCount }, (_, index) => (
             <span
               key={`sub-slot-minute-${minuteOfDay}-${index}`}
               className={cn(
@@ -2843,7 +4035,7 @@ export default function AppointmentsPageClient({
     clientY?: number,
     containerEl?: HTMLElement | null,
   ) => {
-    const subSlotIndex = getDaySubSlotIndex(clientY, containerEl);
+    const subSlotIndex = getDaySubSlotIndex(daySubSlotCount, clientY, containerEl);
     setHoveredDaySubSlotKey(`${employeeId}|${dayKey}|${minuteOfDay}|${subSlotIndex}`);
   };
 
@@ -2866,7 +4058,7 @@ export default function AppointmentsPageClient({
       getDurationMinBetween(draggingAppointment.startsAt, draggingAppointment.endsAt),
       BOOKING_STEP_MIN,
     );
-    const hoveredMinuteOfDay = minuteOfDay + getDaySubSlotOffsetMin(clientY, containerEl);
+    const hoveredMinuteOfDay = minuteOfDay + getDaySubSlotOffsetMin(daySubSlotCount, clientY, containerEl);
     const candidateStartMinute = hoveredMinuteOfDay - draggingAppointment.pointerOffsetMin;
 
     if (candidateStartMinute < 0 || candidateStartMinute + dragDurationMin > 24 * 60) {
@@ -2881,6 +4073,7 @@ export default function AppointmentsPageClient({
       ignoreAppointmentId: draggingAppointment.id,
       workRulesByEmployee: { [employee.id]: employeeWorkRules },
       breakRulesByEmployee: { [employee.id]: employeeBreakRules },
+      workdayOverrideByEmployeeDateKey,
       blockingHolidayByDateKey: holiday ? new Map([[toDateKeyLocal(day), holiday]]) : new Map(),
       holidayWorkOverrideDateKeys: workOverride ? new Set([toDateKeyLocal(day)]) : new Set(),
       timeOff: calendarData?.timeOff || [],
@@ -2895,11 +4088,19 @@ export default function AppointmentsPageClient({
     minuteOfDay: number,
     employee: BookingEmployee,
     layout: "day" | "week" = "day",
+    options?: {
+      durationMin?: number;
+      rowHeightPx?: number;
+    },
   ) => {
     const cellStart = createCellDate(day, minuteOfDay);
     const dayKey = toDateKeyLocal(day);
     const cellDayMinuteKey = dayMinuteKeyLocal(dayKey, minuteOfDay);
     const employeeCellKey = employeeCellKeyLocal(employee.id, dayKey, minuteOfDay);
+    const rowDurationMin = options?.durationMin || timelineStepMin;
+    const rowHeightPx = layout === "day" ? options?.rowHeightPx || DAY_SLOT_HEIGHT_PX : WEEK_SLOT_HEIGHT_PX;
+    const isCollapsedDayRow = layout === "day" && rowDurationMin > timelineStepMin;
+    const dayRowStyle = layout === "day" ? { height: `${rowHeightPx}px` } : undefined;
     const dragPreviewMatchesDraggingSource = Boolean(
       draggingAppointment &&
       dragPreviewSlot &&
@@ -2908,14 +4109,21 @@ export default function AppointmentsPageClient({
       dragPreviewSlot.endsAt === draggingAppointment.endsAt,
     );
 
-    const employeeWorkRules = (workRulesByEmployee[employee.id] || []) as BookingWorkRule[];
-    const employeeBreakRules = (breakRulesByEmployee[employee.id] || []) as BookingBreakRule[];
     const weekday = cellStart.getDay();
+    const employeeWorkRules = (workRulesByEmployee[employee.id] || []) as BookingWorkRule[];
+    const employeeWorkdayOverride = workdayOverrideByEmployeeDateKey.get(workdayOverrideKeyLocal(employee.id, dayKey));
+    const employeeBreakRules = getEffectiveBreakRulesForDay({
+      employeeId: employee.id,
+      weekday,
+      dayKey,
+      breakRulesByEmployee,
+      workdayOverrideByEmployeeDateKey,
+    });
     const holiday = blockingHolidayByDateKey.get(dayKey);
-    const workOverride = holidayWorkOverrideDateKeys.has(dayKey);
+    const workOverride = holidayWorkOverrideDateKeys.has(dayKey) || Boolean(employeeWorkdayOverride);
     const daySubSlotMinutes =
       layout === "day"
-        ? getTimelineBucketMinutes(minuteOfDay, TIMELINE_STEP_MIN, BOOKING_STEP_MIN)
+        ? getTimelineBucketMinutes(minuteOfDay, timelineStepMin, BOOKING_STEP_MIN)
         : [minuteOfDay];
     const daySubSlotEntries =
       layout === "day"
@@ -2923,13 +4131,16 @@ export default function AppointmentsPageClient({
             const subDayMinuteKey = dayMinuteKeyLocal(dayKey, subMinuteOfDay);
             const subEmployeeCellKey = employeeCellKeyLocal(employee.id, dayKey, subMinuteOfDay);
             const subStartsAtIso = createCellDate(day, subMinuteOfDay).toISOString();
-            const subInWork = employeeWorkRules.some(
-              (rule) =>
-                rule.isActive &&
-                rule.weekday === weekday &&
-                subMinuteOfDay >= rule.startMinute &&
-                subMinuteOfDay + BOOKING_STEP_MIN <= rule.endMinute,
-            );
+            const subInWork = employeeWorkdayOverride
+              ? subMinuteOfDay >= employeeWorkdayOverride.startMinute &&
+                subMinuteOfDay + BOOKING_STEP_MIN <= employeeWorkdayOverride.endMinute
+              : employeeWorkRules.some(
+                (rule) =>
+                  rule.isActive &&
+                  rule.weekday === weekday &&
+                  subMinuteOfDay >= rule.startMinute &&
+                  subMinuteOfDay + BOOKING_STEP_MIN <= rule.endMinute,
+              );
             const subOnBreak = employeeBreakRules.find(
               (rule) =>
                 rule.isActive &&
@@ -2977,13 +4188,16 @@ export default function AppointmentsPageClient({
     const inWork =
       layout === "day"
         ? daySubSlotEntries.some((entry) => entry.inWork)
-        : employeeWorkRules.some(
-            (rule) =>
-              rule.isActive &&
-              rule.weekday === weekday &&
-              minuteOfDay >= rule.startMinute &&
-              minuteOfDay + TIMELINE_STEP_MIN <= rule.endMinute,
-          );
+        : employeeWorkdayOverride
+          ? minuteOfDay >= employeeWorkdayOverride.startMinute &&
+            minuteOfDay + timelineStepMin <= employeeWorkdayOverride.endMinute
+          : employeeWorkRules.some(
+              (rule) =>
+                rule.isActive &&
+                rule.weekday === weekday &&
+                minuteOfDay >= rule.startMinute &&
+                minuteOfDay + timelineStepMin <= rule.endMinute,
+            );
     const onBreak =
       layout === "day"
         ? daySubSlotEntries.find((entry) => entry.onBreak)?.onBreak
@@ -2992,7 +4206,7 @@ export default function AppointmentsPageClient({
               rule.isActive &&
               rule.weekday === weekday &&
               minuteOfDay < rule.endMinute &&
-              minuteOfDay + TIMELINE_STEP_MIN > rule.startMinute,
+              minuteOfDay + timelineStepMin > rule.startMinute,
           );
 
     const timeOff =
@@ -3067,13 +4281,14 @@ export default function AppointmentsPageClient({
         : null;
     const hoveredSubSlotTop =
       hoveredSubSlotIndex !== null && Number.isFinite(hoveredSubSlotIndex) && hoveredSubSlotIndex >= 0
-        ? `${hoveredSubSlotIndex * (100 / DAY_SUB_SLOT_COUNT)}%`
+        ? `${hoveredSubSlotIndex * (100 / daySubSlotCount)}%`
         : undefined;
     const hoveredSubSlotEntry =
       layout === "day" && hoveredSubSlotIndex !== null && Number.isFinite(hoveredSubSlotIndex) && hoveredSubSlotIndex >= 0
         ? daySubSlotEntries[hoveredSubSlotIndex]
         : undefined;
     const hoveredMinuteOfDay = hoveredSubSlotEntry?.minuteOfDay ?? minuteOfDay;
+    const hoveredMinuteSuffixLabel = String(hoveredMinuteOfDay % 60).padStart(2, "0");
     const hoveredTimeLabel = formatMinuteLabel(hoveredMinuteOfDay);
     const hoveredSlotStartIso =
       layout === "day" && hoveredSubSlotEntry
@@ -3088,9 +4303,7 @@ export default function AppointmentsPageClient({
         : cellSlotKeys.size > 0;
     const visibleDaySubSlotMinuteIndexes =
       layout === "day"
-        ? new Set(
-            daySubSlotEntries.flatMap((entry, index) => (entry.state === "available" ? [index] : [])),
-          )
+        ? undefined
         : undefined;
     const showCreateHoverOverlay = Boolean(
       hoveredSubSlotTop &&
@@ -3110,7 +4323,7 @@ export default function AppointmentsPageClient({
             const appointmentStartMinuteOfDay = startsAt.getHours() * 60 + startsAt.getMinutes();
             return (
               appointmentStartMinuteOfDay >= minuteOfDay &&
-              appointmentStartMinuteOfDay < minuteOfDay + TIMELINE_STEP_MIN
+              appointmentStartMinuteOfDay < minuteOfDay + timelineStepMin
             );
           })();
     const timeOffStartsHere = timeOff
@@ -3121,7 +4334,7 @@ export default function AppointmentsPageClient({
         return (
           toDateKeyLocal(startsAt) === dayKey &&
           startsMinute >= minuteOfDay &&
-          startsMinute < minuteOfDay + TIMELINE_STEP_MIN
+          startsMinute < minuteOfDay + timelineStepMin
         );
       })()
       : false;
@@ -3138,7 +4351,7 @@ export default function AppointmentsPageClient({
 
         const prevBucketMinutes =
           layout === "day"
-            ? getTimelineBucketMinutes(previousVisibleMinute, TIMELINE_STEP_MIN, BOOKING_STEP_MIN)
+            ? getTimelineBucketMinutes(previousVisibleMinute, timelineStepMin, BOOKING_STEP_MIN)
             : [previousVisibleMinute];
         const prevTimeOff = prevBucketMinutes
           .map((bucketMinute) => {
@@ -3150,8 +4363,8 @@ export default function AppointmentsPageClient({
         return prevTimeOff?.id !== timeOff.id;
       })()
       : false;
-    const isCurrentSlot = isCurrentTimelineSlot(day, minuteOfDay);
-    const slotHeightPx = layout === "week" ? 40 : DAY_SLOT_HEIGHT_PX;
+    const isCurrentSlot = isCurrentTimelineSlot(day, minuteOfDay, rowDurationMin);
+    const slotHeightPx = layout === "week" ? 40 : rowHeightPx;
 
     let state: "off" | "working" | "break" | "holiday" | "timeoff" | "appointment" | "available" = "off";
     if (holiday && !workOverride) state = "holiday";
@@ -3174,7 +4387,7 @@ export default function AppointmentsPageClient({
       layout === "day" &&
       dragPreviewStartMinuteOfDay !== null &&
       dragPreviewStartMinuteOfDay >= minuteOfDay &&
-      dragPreviewStartMinuteOfDay < minuteOfDay + TIMELINE_STEP_MIN;
+      dragPreviewStartMinuteOfDay < minuteOfDay + timelineStepMin;
     const dragPreviewDurationMin =
       dragPreviewStartsHere && dragPreviewSlot
         ? getDurationMinBetween(dragPreviewSlot.startsAt, dragPreviewSlot.endsAt)
@@ -3183,9 +4396,9 @@ export default function AppointmentsPageClient({
       dragPreviewStartsHere && dragPreviewStartMinuteOfDay !== null
         ? dragPreviewStartMinuteOfDay - minuteOfDay
         : 0;
-    const dragPreviewBlockHeightPx = Math.max(6, Math.round((slotHeightPx * dragPreviewDurationMin) / TIMELINE_STEP_MIN) - 2);
+    const dragPreviewBlockHeightPx = Math.max(6, Math.round((slotHeightPx * dragPreviewDurationMin) / timelineStepMin) - 2);
     const dragPreviewBlockTopPx =
-      0.5 + Math.round((slotHeightPx * dragPreviewOffsetMin) / TIMELINE_STEP_MIN);
+      0.5 + Math.round((slotHeightPx * dragPreviewOffsetMin) / timelineStepMin);
     const baseClass = cn(
       "relative overflow-hidden border-l border-t p-0.5 text-left transition-colors first:border-l-0",
       layout === "week" ? weekSlotHeightClass : daySlotHeightClass,
@@ -3221,7 +4434,7 @@ export default function AppointmentsPageClient({
           clientY,
           containerEl,
         )
-        : pickAvailableSlotCandidate(availableCandidates, clientY, containerEl);
+        : pickAvailableSlotCandidate(availableCandidates, rowDurationMin, clientY, containerEl);
     const applyDragFeedback = (slot: AvailableSlotCandidate | null) => {
       if (!slot) {
         setDragHoverSlot(null);
@@ -3241,9 +4454,9 @@ export default function AppointmentsPageClient({
     const dayCellTitle =
       hasCreateableSubSlots
         ? `Создать запись: ${employee.name}, ${hoveredTimeLabel}`
-        : holiday?.title || timeOff?.title || onBreak?.title || undefined;
+        : (!workOverride && holiday ? holiday.title : null) || timeOff?.title || onBreak?.title || undefined;
     const renderDaySubSlotBackgrounds = () => {
-      if (layout !== "day") return null;
+      if (layout !== "day" || isCollapsedDayRow) return null;
 
       return daySubSlotEntries.map((entry, subSlotIndex) => {
         if (entry.state === "appointment") return null;
@@ -3263,8 +4476,8 @@ export default function AppointmentsPageClient({
             key={`${employee.id}|${dayKey}|${minuteOfDay}|bg|${subSlotIndex}`}
             className={subSlotClass}
             style={{
-              top: `${(subSlotIndex * 100) / DAY_SUB_SLOT_COUNT}%`,
-              height: `${100 / DAY_SUB_SLOT_COUNT}%`,
+              top: `${(subSlotIndex * 100) / daySubSlotCount}%`,
+              height: `${100 / daySubSlotCount}%`,
             }}
           />
         );
@@ -3273,6 +4486,7 @@ export default function AppointmentsPageClient({
     const renderDayCreateHitAreas = () => {
       if (
         layout !== "day" ||
+        isCollapsedDayRow ||
         !hasCreateableSubSlots ||
         draggingAppointment ||
         resizingAppointmentDraft ||
@@ -3294,8 +4508,8 @@ export default function AppointmentsPageClient({
             tabIndex={-1}
             className="absolute inset-x-0 z-0 p-0"
             style={{
-              top: `${(subSlotIndex * 100) / DAY_SUB_SLOT_COUNT}%`,
-              height: `${100 / DAY_SUB_SLOT_COUNT}%`,
+              top: `${(subSlotIndex * 100) / daySubSlotCount}%`,
+              height: `${100 / daySubSlotCount}%`,
             }}
             onMouseEnter={() => setHoveredDaySubSlotKey(subSlotHoverKey)}
             onMouseLeave={clearHoveredDaySubSlot}
@@ -3325,7 +4539,7 @@ export default function AppointmentsPageClient({
       const appointmentStartMinuteOfDay = startsAt.getHours() * 60 + startsAt.getMinutes();
       if (
         appointmentStartMinuteOfDay < minuteOfDay ||
-        appointmentStartMinuteOfDay >= minuteOfDay + TIMELINE_STEP_MIN
+        appointmentStartMinuteOfDay >= minuteOfDay + timelineStepMin
       ) {
         return null;
       }
@@ -3356,21 +4570,23 @@ export default function AppointmentsPageClient({
         resizingDraftEndsAt,
       );
       const appointmentStartOffsetMin = appointmentStartMinuteOfDay - minuteOfDay;
-      const exactSlotFactor = appointmentDurationMinForRender / TIMELINE_STEP_MIN;
+      const exactSlotFactor = appointmentDurationMinForRender / timelineStepMin;
       const appointmentBlockHeightPx = Math.max(6, Math.round(slotHeightPx * exactSlotFactor) - 2);
       const appointmentBlockTopPx =
-        0.5 + Math.round((slotHeightPx * appointmentStartOffsetMin) / TIMELINE_STEP_MIN);
+        0.5 + Math.round((slotHeightPx * appointmentStartOffsetMin) / timelineStepMin);
       const appointmentSurfaceClassName = getAppointmentSurfaceClassName(appointmentForRender.status);
       const appointmentMutedTextClassName = getAppointmentMutedTextClassName(appointmentForRender.status);
       const appointmentHandleClassName = getAppointmentHandleClassName(appointmentForRender.status);
       const usesStatusSurface = Boolean(appointmentSurfaceClassName);
       const showAppointmentName = appointmentBlockHeightPx >= 9;
       const showAppointmentPhone = layout === "day" && appointmentBlockHeightPx >= 22;
-      const inlinePhoneText = showAppointmentPhone ? appointmentForRender.clientPhone || "Без номера" : null;
+      const inlinePhoneText = showAppointmentPhone
+        ? formatAppointmentPhoneDisplay(appointmentForRender.clientPhone) || "Без номера"
+        : null;
       const showAppointmentStatus = layout === "day" && appointmentBlockHeightPx >= 24;
       const showResizeHandle = layout === "day" && appointmentBlockHeightPx >= 12;
       const appointmentSpansMultipleTimelineRows =
-        appointmentStartOffsetMin + appointmentDurationMinForRender > TIMELINE_STEP_MIN;
+        appointmentStartOffsetMin + appointmentDurationMinForRender > timelineStepMin;
       const showWeekWrapIcon = layout === "week" && showAppointmentName && appointmentSpansMultipleTimelineRows;
       const isResizingThisAppointment =
         Boolean(resizingAppointmentDraft?.appointmentId === appointmentForRender.id) ||
@@ -3500,6 +4716,7 @@ export default function AppointmentsPageClient({
           key={employee.id + cellStart.toISOString()}
           type="button"
           className={className}
+          style={dayRowStyle}
           onDragOver={(event) => {
             if (!draggingAppointment || resizingAppointmentDraft || resizingAppointmentId) return;
             const hoveredSlot = resolveDropTargetSlot(event.clientY, event.currentTarget);
@@ -3538,7 +4755,7 @@ export default function AppointmentsPageClient({
             });
           }}
           title={`Создать запись: ${employee.name}`}>
-          {renderDaySubSlotMinuteScale(layout, minuteOfDay, visibleDaySubSlotMinuteIndexes)}
+          {!isCollapsedDayRow ? renderDaySubSlotMinuteScale(layout, minuteOfDay, visibleDaySubSlotMinuteIndexes) : null}
           {dragPreviewStartsHere && !dragPreviewMatchesCurrentAppointment ? (
             <div
               className="pointer-events-none absolute left-0.5 right-0.5 z-20 overflow-hidden rounded-md border border-dashed border-sky-500 bg-sky-300/20 dark:border-sky-400/70 dark:bg-sky-500/15"
@@ -3554,13 +4771,13 @@ export default function AppointmentsPageClient({
           ) : null}
           {showCreateHoverOverlay ? (
             <span
-              className="pointer-events-none absolute inset-x-0 z-10 flex items-center justify-start bg-sky-300/65 pl-6 dark:bg-sky-500/30"
-              style={{ top: hoveredSubSlotTop, height: `${100 / DAY_SUB_SLOT_COUNT}%` }}
+              className="pointer-events-none absolute inset-x-0 z-10 flex items-center justify-start bg-sky-300/65 pl-1 dark:bg-sky-500/30"
+              style={{ top: hoveredSubSlotTop, height: `${100 / daySubSlotCount}%` }}
             >
-              <span className="text-[10px] text-sky-700 dark:text-sky-100">+</span>
+              <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-100">+{hoveredMinuteSuffixLabel}</span>
             </span>
           ) : null}
-          {renderDaySubSlotMarkers(layout)}
+          {!isCollapsedDayRow ? renderDaySubSlotMarkers(layout) : null}
           {isCurrentSlot ? <span className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-sky-500 dark:bg-sky-400" /> : null}
         </button>
       );
@@ -3602,9 +4819,10 @@ export default function AppointmentsPageClient({
           void moveAppointmentToAvailableSlot(targetSlot);
         }}
         title={layout === "day" ? undefined : dayCellTitle}
+        style={dayRowStyle}
       >
-        {renderDaySubSlotMinuteScale(layout, minuteOfDay, visibleDaySubSlotMinuteIndexes)}
-        {renderDaySubSlotMarkers(layout)}
+        {!isCollapsedDayRow ? renderDaySubSlotMinuteScale(layout, minuteOfDay, visibleDaySubSlotMinuteIndexes) : null}
+        {!isCollapsedDayRow ? renderDaySubSlotMarkers(layout) : null}
         {isCurrentSlot ? <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-sky-500 dark:bg-sky-400" /> : null}
         {dragPreviewStartsHere && !dragPreviewMatchesCurrentAppointment ? (
           <div
@@ -3623,10 +4841,10 @@ export default function AppointmentsPageClient({
         {renderDayCreateHitAreas()}
         {showCreateHoverOverlay ? (
           <span
-            className="pointer-events-none absolute inset-x-0 z-0 flex items-center justify-start bg-sky-200/50 pl-6 dark:bg-sky-500/22"
-            style={{ top: hoveredSubSlotTop, height: `${100 / DAY_SUB_SLOT_COUNT}%` }}
+            className="pointer-events-none absolute inset-x-0 z-0 flex items-center justify-start bg-sky-200/50 pl-1 dark:bg-sky-500/22"
+            style={{ top: hoveredSubSlotTop, height: `${100 / daySubSlotCount}%` }}
           >
-            <span className="text-[10px] text-sky-700 dark:text-sky-100">+</span>
+            <span className="text-[10px] font-semibold text-sky-700 dark:text-sky-100">+{hoveredMinuteSuffixLabel}</span>
           </span>
         ) : null}
         {layout === "day"
@@ -3644,22 +4862,7 @@ export default function AppointmentsPageClient({
             {onBreak.title || "Перерыв"}
           </div>
         ) : null}
-        {!appointment && !timeOff && !onBreak && holiday ? (
-          <div className="relative z-0 flex h-full items-center truncate pl-7 pr-1 text-[10px]">
-            {holiday.title}
-          </div>
-        ) : null}
-        {layout === "day" && !hasCreateableSubSlots && timeOff && timeOffLabelStartsHere ? (
-          <div className="relative z-0 flex h-full items-center truncate pl-7 pr-1 text-[10px] font-medium">
-            {timeOff.title || getTimeOffTypeLabelRu(timeOff.type)}
-          </div>
-        ) : null}
-        {layout === "day" && !hasCreateableSubSlots && !timeOff && onBreak ? (
-          <div className="relative z-0 flex h-full items-center truncate pl-7 pr-1 text-[10px]">
-            {onBreak.title || "Перерыв"}
-          </div>
-        ) : null}
-        {layout === "day" && !hasCreateableSubSlots && !timeOff && !onBreak && holiday ? (
+        {!appointment && !timeOff && !onBreak && holiday && !workOverride ? (
           <div className="relative z-0 flex h-full items-center truncate pl-7 pr-1 text-[10px]">
             {holiday.title}
           </div>
@@ -3668,19 +4871,18 @@ export default function AppointmentsPageClient({
     );
   };
 
-  const renderWeekAggregateCell = (day: Date, minuteOfDay: number) => {
+  const getWeekTimelineRowContext = (day: Date, minuteOfDay: number, durationMin = weekTimelineStepMin) => {
     const cellStart = createCellDate(day, minuteOfDay);
     const cellEnd = new Date(cellStart);
-    cellEnd.setMinutes(cellEnd.getMinutes() + WEEK_TIMELINE_STEP_MIN);
+    cellEnd.setMinutes(cellEnd.getMinutes() + durationMin);
     const dayKey = toDateKeyLocal(day);
-    const bucketMinutes = getTimelineBucketMinutes(minuteOfDay, WEEK_TIMELINE_STEP_MIN, BOOKING_STEP_MIN);
-    const key = `week-${toDateKeyLocal(day)}-${minuteOfDay}`;
-
+    const weekday = day.getDay();
+    const bucketMinutes = getTimelineBucketMinutes(minuteOfDay, durationMin, BOOKING_STEP_MIN);
     const holiday = blockingHolidayByDateKey.get(dayKey);
-
     const appointmentsById = new Map<string, BookingAppointment>();
     const timeOffById = new Map<string, BookingTimeOff>();
-    const availableCandidatesByKey = new Map<string, { employeeId: string; startsAt: string; endsAt: string }>();
+    const breaksById = new Map<string, BookingBreakRule>();
+    const availableCandidatesByKey = new Map<string, AvailableSlotCandidate>();
 
     for (const bucketMinute of bucketMinutes) {
       const bucketDayMinuteKey = dayMinuteKeyLocal(dayKey, bucketMinute);
@@ -3690,6 +4892,22 @@ export default function AppointmentsPageClient({
       }
       for (const item of timeOffOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || []) {
         timeOffById.set(item.id, item);
+      }
+      for (const employee of visibleEmployees) {
+        for (const rule of getEffectiveBreakRulesForDay({
+          employeeId: employee.id,
+          weekday,
+          dayKey,
+          breakRulesByEmployee,
+          workdayOverrideByEmployeeDateKey,
+        })) {
+          if (
+            bucketMinute < rule.endMinute &&
+            bucketMinute + BOOKING_STEP_MIN > rule.startMinute
+          ) {
+            breaksById.set(rule.id, rule);
+          }
+        }
       }
       for (const candidate of availableCandidatesByDayMinuteKey.get(bucketDayMinuteKey) || []) {
         availableCandidatesByKey.set(`${candidate.employeeId}|${candidate.startsAt}`, candidate);
@@ -3702,105 +4920,376 @@ export default function AppointmentsPageClient({
     const overlappingTimeOff = Array.from(timeOffById.values()).sort(
       (a, b) => +new Date(a.startsAt) - +new Date(b.startsAt),
     );
+    const overlappingBreaks = Array.from(breaksById.values()).sort((a, b) => a.startMinute - b.startMinute);
+    const breakLabelText = Array.from(
+      new Set(overlappingBreaks.map((item) => item.title?.trim() || "Перерыв")),
+    ).join(", ");
     const availableCandidates = Array.from(availableCandidatesByKey.values()).sort(
       (a, b) => +new Date(a.startsAt) - +new Date(b.startsAt),
     );
-    const availableEmployeeCount = new Set(availableCandidates.map((candidate) => candidate.employeeId)).size;
 
-    const isCurrentSlot = isCurrentTimelineSlot(day, minuteOfDay, WEEK_TIMELINE_STEP_MIN);
+    return {
+      cellStart,
+      cellEnd,
+      dayKey,
+      holiday,
+      appointmentsOverlapping,
+      overlappingTimeOff,
+      overlappingBreaks,
+      breakLabelText,
+      availableCandidates,
+      availableEmployeeCount: new Set(availableCandidates.map((candidate) => candidate.employeeId)).size,
+    };
+  };
+
+  const renderWeekTimelineRow = (
+    day: Date,
+    minuteOfDay: number,
+    options?: {
+      durationMin?: number;
+      isCollapsed?: boolean;
+    },
+  ) => {
+    const rowDurationMin = options?.durationMin || weekTimelineStepMin;
+    const {
+      cellStart,
+      cellEnd,
+      holiday,
+      appointmentsOverlapping,
+      overlappingTimeOff,
+      breakLabelText,
+      availableCandidates,
+      availableEmployeeCount,
+    } = getWeekTimelineRowContext(day, minuteOfDay, rowDurationMin);
+    const isCurrentSlot = isCurrentTimelineSlot(day, minuteOfDay, rowDurationMin);
+    const canCreateInSlot = availableEmployeeCount > 0;
+    const isCollapsedWeekRow = Boolean(options?.isCollapsed);
+    const currentWeekRowIndex = weekTimeRowIndexByMinute.get(minuteOfDay) ?? -1;
+    const previousWeekRowMinute = currentWeekRowIndex > 0 ? weekTimeRows[currentWeekRowIndex - 1] : undefined;
+    const previousBreakLabelText =
+      breakLabelText && previousWeekRowMinute !== undefined
+        ? getWeekTimelineRowContext(day, previousWeekRowMinute, weekTimelineStepMin).breakLabelText
+        : "";
+    const showBreakLabel =
+      Boolean(breakLabelText) &&
+      appointmentsOverlapping.length === 0 &&
+      overlappingTimeOff.length === 0 &&
+      breakLabelText !== previousBreakLabelText;
+
+    const weekRowTitle =
+      overlappingTimeOff.length > 0
+        ? overlappingTimeOff.length === 1
+          ? overlappingTimeOff[0].title || getTimeOffTypeLabelRu(overlappingTimeOff[0].type)
+          : `Блокировки: ${overlappingTimeOff.length}`
+        : breakLabelText
+          ? breakLabelText
+          : holiday?.title;
 
     const className = cn(
-      "relative overflow-hidden border-l border-t px-0.5 py-0.5 first:border-l-0",
-      weekSlotHeightClass,
-      holiday ? "bg-rose-50/60 dark:bg-rose-950/35" : "bg-background/40",
+      "relative h-full overflow-hidden border-t px-0.5 py-0.5",
+      holiday && !canCreateInSlot ? "bg-rose-50/60 dark:bg-rose-950/35" : "bg-background/40",
       appointmentsOverlapping.length > 0 && "bg-background",
-      availableEmployeeCount > 0 && appointmentsOverlapping.length === 0 && !holiday && "bg-sky-50/40 dark:bg-sky-950/25",
+      availableEmployeeCount > 0 &&
+        appointmentsOverlapping.length === 0 &&
+        (!holiday || canCreateInSlot) &&
+        "bg-sky-50/40 dark:bg-sky-950/25",
       isCurrentSlot && "ring-1 ring-sky-300/80 ring-inset dark:ring-sky-500/60",
     );
-    const canCreateInSlot = availableEmployeeCount > 0;
 
-    return (
-      <div key={key} className={className} title={holiday?.title || undefined}>
-        {isCurrentSlot ? <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-sky-500 dark:bg-sky-400" /> : null}
-        {appointmentsOverlapping.length > 0 || canCreateInSlot ? (
-          <div className="flex flex-col gap-1">
-            {appointmentsOverlapping.map((appointment) => {
-              const employee = employeesById.get(appointment.employeeId);
-              const appointmentStart = new Date(appointment.startsAt);
-              const appointmentEnd = new Date(appointment.endsAt);
-              const showWrapIcon =
-                !Number.isNaN(appointmentStart.getTime()) &&
-                !Number.isNaN(appointmentEnd.getTime()) &&
-                appointmentStart < cellStart &&
-                appointmentEnd > cellStart;
-              return (
-                <button
-                  type="button"
-                  key={`${appointment.id}-${dayKey}-${minuteOfDay}`}
-                  className={cn(
-                    "flex h-[18px] max-w-full items-center gap-1 rounded-[4px] border px-1.5 text-[10px] leading-none",
-                    getAppointmentSurfaceClassName(appointment.status) || "border-transparent text-white hover:brightness-95",
-                  )}
-                  style={
-                    getAppointmentSurfaceClassName(appointment.status)
-                      ? undefined
-                      : {
-                          backgroundColor: employee?.color || "#0ea5e9",
-                          borderColor: employee?.color || "#0ea5e9",
-                        }
-                  }
-                  title={`${employee?.name || "Сотрудник"} · ${appointment.clientName}${appointment.clientPhone ? ` · ${appointment.clientPhone}` : ""
-                    }`}
-                  onClick={() => openExistingAppointmentDialog(appointment)}
-                >
-                  {showWrapIcon ? <CornerDownRight className="size-2.5 shrink-0" /> : null}
-                  <AppointmentStatusInline
-                    status={appointment.status}
-                    showLabel={false}
-                    iconClassName="size-2.5 shrink-0"
-                  />
-                  <span className="min-w-0 truncate font-semibold">{appointment.clientName}</span>
-                </button>
-              );
-            })}
-            {canCreateInSlot ? (
-              <button
-                type="button"
-                className="flex h-[18px] max-w-full items-center gap-1 rounded-[4px] border border-sky-200/80 bg-sky-100/80 px-1.5 text-[10px] leading-none text-sky-900 hover:bg-sky-200/70 dark:border-sky-800/70 dark:bg-sky-950/55 dark:text-sky-100 dark:hover:bg-sky-900/80"
-                title={`Создать запись (${availableEmployeeCount}/${Math.max(visibleEmployees.length, 1)} свободно)`}
-                onClick={() =>
-                  openCreateAppointmentFromSlot({
-                    employeeId: availableCandidates[0]?.employeeId || null,
-                    startsAt: availableCandidates[0]?.startsAt || cellStart.toISOString(),
-                    endsAt: availableCandidates[0]?.endsAt || cellEnd.toISOString(),
-                    candidateSlots: availableCandidates,
-                  })
-                }>
-                <Plus className="size-3 shrink-0" />
-                <span className="font-semibold text-sky-900 dark:text-sky-100">
-                  {availableEmployeeCount}/{Math.max(visibleEmployees.length, 1)}
-                </span>
-              </button>
+    if (canCreateInSlot) {
+      return (
+        <button
+          type="button"
+          className={cn(className, "group w-full text-left hover:bg-sky-100/50 dark:hover:bg-sky-900/35")}
+          title="Создать запись"
+          onClick={() =>
+            openCreateAppointmentFromSlot({
+              employeeId: availableCandidates[0]?.employeeId || null,
+              startsAt: availableCandidates[0]?.startsAt || cellStart.toISOString(),
+              endsAt: availableCandidates[0]?.endsAt || cellEnd.toISOString(),
+              candidateSlots: availableCandidates,
+            })
+          }
+        >
+          {isCurrentSlot ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-sky-500 dark:bg-sky-400" />
+          ) : null}
+          <div className="flex h-full items-center">
+            <span
+              className="flex shrink-0 items-center justify-center text-[10px] font-semibold text-sky-800 opacity-0 transition-opacity group-hover:opacity-100 dark:text-sky-100"
+              style={{ width: `${WEEK_OVERLAY_LEFT_GUTTER_PX - 2}px` }}
+            >
+              <Plus className="size-3 shrink-0" />
+            </span>
+            {showBreakLabel ? (
+              <span className="min-w-0 truncate text-[10px] font-medium text-amber-800 dark:text-amber-100">
+                {breakLabelText}
+              </span>
             ) : null}
           </div>
-        ) : overlappingTimeOff.length > 0 ? (
-          <div className="truncate text-[10px] text-amber-800 dark:text-amber-100">
-            {overlappingTimeOff.length === 1
-              ? overlappingTimeOff[0].title || getTimeOffTypeLabelRu(overlappingTimeOff[0].type)
-              : `Блокировки: ${overlappingTimeOff.length}`}
+        </button>
+      );
+    }
+
+    return (
+      <div className={className} title={weekRowTitle || undefined}>
+        {isCurrentSlot ? <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5 bg-sky-500 dark:bg-sky-400" /> : null}
+        {showBreakLabel ? (
+          <div className="flex h-full items-center truncate px-1 text-[10px] font-medium text-amber-800 dark:text-amber-100">
+            {breakLabelText}
           </div>
-        ) : holiday ? (
-          <div className="truncate text-[10px] text-rose-700 dark:text-rose-200">{holiday.title}</div>
+        ) : !isCollapsedWeekRow && holiday && appointmentsOverlapping.length === 0 ? (
+          <div className="flex h-full items-center truncate px-1 text-[10px] text-rose-700 dark:text-rose-200">
+            {holiday.title}
+          </div>
         ) : null}
       </div>
     );
   };
 
+  const renderWeekTimelineDayOverlay = (
+    day: Date,
+    getOffsetTopPx: (minuteOfDay: number) => number,
+    columnHeightPx: number,
+  ) => {
+    const dayKey = toDateKeyLocal(day);
+    const firstVisibleMinute = weekTimeRows[0];
+
+    if (firstVisibleMinute === undefined) return null;
+
+    const lastVisibleMinute = weekTimeRows[weekTimeRows.length - 1];
+    const endVisibleMinute =
+      lastVisibleMinute === undefined ? firstVisibleMinute + weekTimelineStepMin : lastVisibleMinute + weekTimelineStepMin;
+    const appointmentsById = new Map<string, BookingAppointment>();
+
+    for (const minuteOfDay of weekTimeRows) {
+      const bucketMinutes = getTimelineBucketMinutes(minuteOfDay, weekTimelineStepMin, BOOKING_STEP_MIN);
+      for (const bucketMinute of bucketMinutes) {
+        const bucketDayMinuteKey = dayMinuteKeyLocal(dayKey, bucketMinute);
+        for (const appointment of appointmentsOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || []) {
+          if (!isAppointmentVisible(appointment)) continue;
+          appointmentsById.set(appointment.id, appointment);
+        }
+      }
+    }
+
+    const dayAppointments = Array.from(appointmentsById.values()).sort(
+      (a, b) => +new Date(a.startsAt) - +new Date(b.startsAt),
+    );
+    const earliestMarkerMinuteByEmployeeId = new Map<string, number>();
+
+    for (const appointment of dayAppointments) {
+      const appointmentStartMinuteOfDay = getMinuteOfDayFromIso(appointment.startsAt);
+      if (appointmentStartMinuteOfDay === null) continue;
+
+      const currentMinStart = earliestMarkerMinuteByEmployeeId.get(appointment.employeeId);
+      if (currentMinStart === undefined || appointmentStartMinuteOfDay < currentMinStart) {
+        earliestMarkerMinuteByEmployeeId.set(appointment.employeeId, appointmentStartMinuteOfDay);
+      }
+    }
+
+    const statusBlocks: Array<{
+      employeeId: string;
+      kind: "timeoff";
+      label: string;
+      startMinute: number;
+      endMinute: number;
+      itemKey: string;
+    }> = [];
+
+    for (const employee of visibleEmployees) {
+      let currentStatusBlock:
+        | {
+            kind: "timeoff";
+            label: string;
+            startMinute: number;
+            endMinute: number;
+            itemKey: string;
+          }
+        | null = null;
+
+      const flushStatusBlock = () => {
+        if (!currentStatusBlock) return;
+        statusBlocks.push({
+          employeeId: employee.id,
+          ...currentStatusBlock,
+        });
+        const currentEarliestMinute = earliestMarkerMinuteByEmployeeId.get(employee.id);
+        if (currentEarliestMinute === undefined || currentStatusBlock.startMinute < currentEarliestMinute) {
+          earliestMarkerMinuteByEmployeeId.set(employee.id, currentStatusBlock.startMinute);
+        }
+        currentStatusBlock = null;
+      };
+
+      for (const minuteOfDay of weekTimeRows) {
+        const bucketDayMinuteKey = dayMinuteKeyLocal(dayKey, minuteOfDay);
+        const employeeCellKey = employeeCellKeyLocal(employee.id, dayKey, minuteOfDay);
+        const hasVisibleAppointment = (appointmentsOverlappingByDayMinuteKey.get(bucketDayMinuteKey) || []).some(
+          (appointment) => appointment.employeeId === employee.id && isAppointmentVisible(appointment),
+        );
+
+        if (hasVisibleAppointment) {
+          flushStatusBlock();
+          continue;
+        }
+
+        const timeOff = timeOffByEmployeeCellKey.get(employeeCellKey) || globalTimeOffByCellKey.get(bucketDayMinuteKey);
+        const nextStatusBlock = timeOff
+          ? {
+              kind: "timeoff" as const,
+              label: timeOff.title || getTimeOffTypeLabelRu(timeOff.type),
+              itemKey: `timeoff:${timeOff.id}`,
+            }
+          : null;
+
+        if (!nextStatusBlock) {
+          flushStatusBlock();
+          continue;
+        }
+
+        if (
+          currentStatusBlock &&
+          currentStatusBlock.itemKey === nextStatusBlock.itemKey &&
+          currentStatusBlock.kind === nextStatusBlock.kind &&
+          currentStatusBlock.endMinute === minuteOfDay
+        ) {
+          currentStatusBlock.endMinute = minuteOfDay + weekTimelineStepMin;
+          continue;
+        }
+
+        flushStatusBlock();
+        currentStatusBlock = {
+          ...nextStatusBlock,
+          startMinute: minuteOfDay,
+          endMinute: minuteOfDay + weekTimelineStepMin,
+        };
+      }
+
+      flushStatusBlock();
+    }
+
+    const dayEmployeeCascadeIndexById = new Map(
+      Array.from(earliestMarkerMinuteByEmployeeId.entries())
+        .sort((a, b) => {
+          if (a[1] !== b[1]) return a[1] - b[1];
+          return (visibleEmployeeIndexById.get(a[0]) ?? Number.MAX_SAFE_INTEGER) - (visibleEmployeeIndexById.get(b[0]) ?? Number.MAX_SAFE_INTEGER);
+        })
+        .map(([employeeId], index) => [employeeId, Math.min(index, weekVisibleEmployeeCascadeCount - 1)] as const),
+    );
+    const renderedStatusBlocks = statusBlocks.map((block) => {
+      const employee = employeesById.get(block.employeeId);
+      const visibleStartMinute = Math.max(block.startMinute, firstVisibleMinute);
+      const visibleEndMinute = Math.min(block.endMinute, endVisibleMinute);
+
+      if (visibleEndMinute <= visibleStartMinute) return null;
+
+      const cascadeIndex =
+        dayEmployeeCascadeIndexById.get(block.employeeId) ??
+        Math.min(visibleEmployeeIndexById.get(block.employeeId) ?? 0, weekVisibleEmployeeCascadeCount - 1);
+      const cascadeLeftPx = WEEK_OVERLAY_LEFT_GUTTER_PX + cascadeIndex * WEEK_OVERLAY_CASCADE_OFFSET_PX;
+      const blockTopPx = 0.5 + Math.round(getOffsetTopPx(visibleStartMinute));
+      const blockBottomPx = Math.min(columnHeightPx, Math.max(blockTopPx + 12, Math.round(getOffsetTopPx(visibleEndMinute))));
+      const blockHeightPx = Math.max(12, blockBottomPx - blockTopPx - 2);
+
+      return (
+        <div
+          key={`${dayKey}-${block.itemKey}-${block.employeeId}-${block.startMinute}`}
+          className={cn(
+            "pointer-events-none absolute right-0.5 z-10 overflow-hidden px-1 py-0.5 text-left",
+            "flex min-w-0 items-center justify-start text-[10px] font-medium leading-none",
+            block.kind === "timeoff"
+              ? "bg-amber-50 text-amber-900 dark:bg-amber-950/45 dark:text-amber-100"
+              : "bg-amber-50/60 text-amber-900 dark:bg-amber-950/30 dark:text-amber-100",
+          )}
+          style={{
+            left: `${cascadeLeftPx}px`,
+            top: `${blockTopPx}px`,
+            height: `${blockHeightPx}px`,
+            zIndex: 10 + cascadeIndex,
+          }}
+          title={`${employee?.name || "Сотрудник"} · ${block.label}`}
+        >
+          <span className="min-w-0 truncate">{block.label}</span>
+        </div>
+      );
+    });
+
+    const renderedAppointments = dayAppointments.map((appointment) => {
+      const employee = employeesById.get(appointment.employeeId);
+      const startsAt = new Date(appointment.startsAt);
+      const endsAt = new Date(appointment.endsAt);
+
+      if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) return null;
+      if (toDateKeyLocal(startsAt) !== dayKey) return null;
+
+      const appointmentStartMinuteOfDay = startsAt.getHours() * 60 + startsAt.getMinutes();
+      const appointmentEndMinuteOfDay = endsAt.getHours() * 60 + endsAt.getMinutes();
+      const visibleStartMinute = Math.max(appointmentStartMinuteOfDay, firstVisibleMinute);
+      const visibleEndMinute = Math.min(appointmentEndMinuteOfDay, endVisibleMinute);
+
+      if (visibleEndMinute <= visibleStartMinute) return null;
+
+      const appointmentSurfaceClassName = getAppointmentSurfaceClassName(appointment.status);
+      const usesStatusSurface = Boolean(appointmentSurfaceClassName);
+      const cascadeIndex =
+        dayEmployeeCascadeIndexById.get(appointment.employeeId) ??
+        Math.min(visibleEmployeeIndexById.get(appointment.employeeId) ?? 0, weekVisibleEmployeeCascadeCount - 1);
+      const cascadeLeftPx = WEEK_OVERLAY_LEFT_GUTTER_PX + cascadeIndex * WEEK_OVERLAY_CASCADE_OFFSET_PX;
+      const appointmentBlockTopPx = 0.5 + Math.round(getOffsetTopPx(visibleStartMinute));
+      const appointmentBlockBottomPx = Math.min(columnHeightPx, Math.max(appointmentBlockTopPx + 12, Math.round(getOffsetTopPx(visibleEndMinute))));
+      const appointmentBlockHeightPx = Math.max(12, appointmentBlockBottomPx - appointmentBlockTopPx - 2);
+      const showWrapIcon = appointmentStartMinuteOfDay < firstVisibleMinute;
+      const appointmentTimeRangeLabel = `${formatMinuteLabel(appointmentStartMinuteOfDay)}-${formatMinuteLabel(appointmentEndMinuteOfDay)}`;
+
+      return (
+        <button
+          type="button"
+          key={`${dayKey}-${appointment.id}`}
+          className={cn(
+            "absolute right-0.5 z-20 overflow-hidden rounded-[4px] border px-1 py-0.5 text-left shadow-sm",
+            "flex min-w-0 flex-col items-start justify-start",
+            appointmentSurfaceClassName || "text-white hover:brightness-95",
+          )}
+          style={{
+            ...(usesStatusSurface
+              ? {}
+              : {
+                  backgroundColor: employee?.color || "#0ea5e9",
+                  borderColor: employee?.color || "#0ea5e9",
+                }),
+            left: `${cascadeLeftPx}px`,
+            top: `${appointmentBlockTopPx}px`,
+            height: `${appointmentBlockHeightPx}px`,
+            zIndex: 20 + cascadeIndex,
+          }}
+          title={`${employee?.name || "Сотрудник"} · ${appointment.clientName}${formatAppointmentPhoneDisplay(appointment.clientPhone) ? ` · ${formatAppointmentPhoneDisplay(appointment.clientPhone)}` : ""
+            }`}
+          onClick={() => openExistingAppointmentDialog(appointment)}
+        >
+          <span className="flex min-w-0 items-center gap-1 text-[9px] font-semibold leading-none opacity-90">
+            {showWrapIcon ? <CornerDownRight className="size-2.5 shrink-0" /> : null}
+            <AppointmentStatusInline
+              status={appointment.status}
+              showLabel={false}
+              iconClassName="size-2.5 shrink-0"
+            />
+            <span className="min-w-0 truncate">{appointmentTimeRangeLabel}</span>
+          </span>
+          <span className="min-w-0 truncate text-[10px] font-medium leading-none opacity-85">
+            {appointment.clientName}
+          </span>
+        </button>
+      );
+    });
+
+    return [...renderedStatusBlocks, ...renderedAppointments];
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="grid min-[1100px]:grid-cols-[280px_minmax(0,1fr)] min-[1400px]:grid-cols-[300px_minmax(0,1fr)]">
-        <Card className="min-w-0 gap-4 border-border/80 py-4">
-          <CardContent className="space-y-4 px-4 min-[1400px]:px-6">
+    <div className="h-[100dvh] overflow-hidden">
+      <div className="grid h-full min-h-0 min-[1100px]:grid-cols-[248px_minmax(0,1fr)] min-[1400px]:grid-cols-[264px_minmax(0,1fr)]">
+        <Card className="min-w-0 h-full min-h-0 gap-3 overflow-hidden border-border/80 py-4">
+          <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 min-[1400px]:px-4">
             <Tabs value={view} onValueChange={(value) => setView(value as BookingView)}>
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="day">День</TabsTrigger>
@@ -3808,7 +5297,7 @@ export default function AppointmentsPageClient({
                 <TabsTrigger value="month">Месяц</TabsTrigger>
               </TabsList>
             </Tabs>
-            <div className="rounded-lg p-2">
+            <div className="rounded-lg">
               <Calendar
                 mode="single"
                 locale={ru}
@@ -3821,104 +5310,203 @@ export default function AppointmentsPageClient({
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm">Сотрудники</Label>
-                <div className="flex items-center gap-1">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-8"
-                    onClick={openCreateEmployeeDialog}
-                    title="Создать сотрудника"
-                    aria-label="Создать сотрудника">
-                    <Plus className="size-4" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-8"
-                    onClick={() => openScheduleDialog(visibleEmployees[0]?.id || employees[0]?.id)}
-                    disabled={!employees.length}
-                    title="График"
-                    aria-label="График">
-                    <Clock3 className="size-4" />
-                  </Button>
-                </div>
-              </div>
-              <div className="rounded-md">
-                <div className="space-y-1 p-2">
-                  {employees.length === 0 ? (
-                    <div className="text-muted-foreground px-2 py-6 text-center text-sm">
-                      Нет сотрудников. Создайте первого, чтобы открыть слоты записи.
+              <Tabs
+                value={directoryTab}
+                onValueChange={(value) => setDirectoryTab(value as "employees" | "services")}
+                className="space-y-2"
+              >
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="employees">Сотрудники</TabsTrigger>
+                  <TabsTrigger value="services">Услуги</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="employees" className="mt-0 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Сотрудники</Label>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8"
+                        onClick={openCreateEmployeeDialog}
+                        title="Создать сотрудника"
+                        aria-label="Создать сотрудника"
+                      >
+                        <Plus className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8"
+                        onClick={() => openScheduleDialog(visibleEmployees[0]?.id || employees[0]?.id)}
+                        disabled={!employees.length}
+                        title="График"
+                        aria-label="График"
+                      >
+                        <Clock3 className="size-4" />
+                      </Button>
                     </div>
-                  ) : (
-                    employees.map((employee) => {
-                      const checked = selectedSet.has(employee.id);
-                      const displayName = truncateText(employee.name || "Сотрудник", EMPLOYEE_NAME_MAX_LENGTH);
-                      const specialtyLabel = truncateText(
-                        employee.specialty || "Без специализации",
-                        EMPLOYEE_SPECIALTY_MAX_LENGTH,
-                      );
-                      return (
-                        <div
-                          key={employee.id}
-                          className="group hover:bg-accent flex items-start gap-2 rounded-sm bg-muted px-2 py-2"
-                        >
-                          <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(value) => toggleEmployee(employee.id, value === true)}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-medium">{displayName}</div>
-                              <div className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs">
-                                <span
-                                  className="inline-block size-2.5 shrink-0 rounded-full"
-                                  style={{ backgroundColor: employee.color || getEmployeeColorFallback(employee.id) }}
+                  </div>
+
+                  <div className="rounded-md">
+                    <div className="space-y-1 p-1">
+                      {employees.length === 0 ? (
+                        <div className="text-muted-foreground px-2 py-6 text-center text-sm">
+                          Нет сотрудников. Создайте первого, чтобы открыть слоты записи.
+                        </div>
+                      ) : (
+                        employees.map((employee) => {
+                          const checked = selectedSet.has(employee.id);
+                          const displayName = truncateText(employee.name || "Сотрудник", EMPLOYEE_NAME_MAX_LENGTH);
+                          const specialtyLabel = truncateText(
+                            employee.specialty || "Без специализации",
+                            EMPLOYEE_SPECIALTY_MAX_LENGTH,
+                          );
+
+                          return (
+                            <div
+                              key={employee.id}
+                              className="group hover:bg-accent flex items-start gap-2 rounded-sm bg-muted px-2 py-2"
+                            >
+                              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(value) => toggleEmployee(employee.id, value === true)}
                                 />
-                                <span className="truncate">{specialtyLabel}</span>
-                                <Badge
-                                  variant="outline"
-                                  className="h-4 shrink-0 rounded-sm px-1 text-[10px] font-normal leading-none"
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-medium">{displayName}</div>
+                                  <div className="text-muted-foreground flex min-w-0 items-center gap-1.5 text-xs">
+                                    <span
+                                      className="inline-block size-2.5 shrink-0 rounded-full"
+                                      style={{ backgroundColor: employee.color || getEmployeeColorFallback(employee.id) }}
+                                    />
+                                    <span className="truncate">{specialtyLabel}</span>
+                                    <Badge
+                                      variant="outline"
+                                      className="h-4 shrink-0 rounded-sm px-1 text-[10px] font-normal leading-none"
+                                    >
+                                      {employee.slotDurationMin}м
+                                    </Badge>
+                                  </div>
+                                  {employee.description ? (
+                                    <div className="text-muted-foreground mt-1 max-h-8 overflow-hidden text-[11px] leading-4">
+                                      {employee.description}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </label>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                                title="Редактировать сотрудника"
+                                aria-label="Редактировать сотрудника"
+                                onClick={() => openEditEmployeeDialog(employee)}
+                              >
+                                <Pencil className="size-3.5" />
+                              </Button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="services" className="mt-0 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm">Услуги</Label>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-8"
+                      onClick={openCreateServiceDialog}
+                      title="Создать услугу"
+                      aria-label="Создать услугу"
+                    >
+                      <Plus className="size-4" />
+                    </Button>
+                  </div>
+
+                  <div className="rounded-md">
+                    <div className="space-y-1 p-1">
+                      {services.length === 0 ? (
+                        <div className="text-muted-foreground px-2 py-6 text-center text-sm">
+                          Нет услуг. Добавьте первую, чтобы настроить базовую и персональные цены.
+                        </div>
+                      ) : (
+                        services.map((service) => {
+                          const activePrices = service.prices.filter((item) => item.isActive && item.price > 0);
+                          const effectivePricePoints = [
+                            ...(service.basePrice > 0 ? [service.basePrice] : []),
+                            ...activePrices.map((item) => item.price),
+                          ];
+                          const minPrice = effectivePricePoints.length ? Math.min(...effectivePricePoints) : null;
+                          const serviceTypeLabel =
+                            getServiceAppointmentTypeLabel(service.serviceType) || "Тип не задан";
+
+                          return (
+                            <div
+                              key={service.id}
+                              className={cn(
+                                "group hover:bg-accent rounded-md border border-border/60 bg-muted/35 px-2.5 py-2 transition-colors",
+                                !service.isActive && "opacity-65",
+                              )}
+                            >
+                              <div className="flex items-start gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-medium leading-5">{service.name}</div>
+                                  <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] leading-4">
+                                    <span>{formatDurationRu(service.durationMin)}</span>
+                                    <span>•</span>
+                                    <span>{serviceTypeLabel}</span>
+                                    <span>•</span>
+                                    <span>
+                                      от <span className="text-foreground font-medium">{minPrice !== null ? `${minPrice} ₸` : "не задана"}</span>
+                                    </span>
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                                  title="Редактировать услугу"
+                                  aria-label="Редактировать услугу"
+                                  onClick={() => openEditServiceDialog(service)}
                                 >
-                                  {employee.slotDurationMin}м
-                                </Badge>
+                                  <Pencil className="size-3.5" />
+                                </Button>
                               </div>
                             </div>
-                          </label>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            className="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                            title="Редактировать сотрудника"
-                            aria-label="Редактировать сотрудника"
-                            onClick={() => openEditEmployeeDialog(employee)}
-                          >
-                            <Pencil className="size-3.5" />
-                          </Button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </div>
           </CardContent>
         </Card>
 
-        <div className="min-w-0 rounded-xl bg-background p-2">
-          <Tabs value={contentTab} onValueChange={(value) => setContentTab(value as "calendar" | "list")} className="space-y-2">
+        <div className="min-w-0 h-full min-h-0 rounded-xl bg-background p-1">
+          <Tabs
+            value={contentTab}
+            onValueChange={(value) => setContentTab(value as "calendar" | "list")}
+            className="h-full min-h-0 space-y-1.5"
+          >
             <div className="flex justify-end">
               <TabsList className="grid w-[220px] grid-cols-2">
                 <TabsTrigger value="calendar">Календарь</TabsTrigger>
                 <TabsTrigger value="list">Список</TabsTrigger>
               </TabsList>
             </div>
-            <TabsContent value="calendar" className="mt-0">
-              <div className="px-0 pt-0">
+            <TabsContent value="calendar" className="mt-0 min-h-0 overflow-hidden">
+              <div className="flex h-full min-h-0 flex-col px-0 pt-0">
                 {view === "month" ? (
-                  <div className="px-4 pb-4">
+                  <div className="h-full min-h-0 overflow-auto px-4 pb-4">
                     <div className="grid grid-cols-7 gap-2 text-center text-xs font-medium text-muted-foreground">
                       {["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map((day) => (
                         <div key={day} className="py-1">
@@ -4014,14 +5602,16 @@ export default function AppointmentsPageClient({
                     weekHeaderTitle={weekHeaderTitle}
                     weekHeaderSubtitle={weekHeaderSubtitle}
                     weekTimeRowClass={weekTimeRowClass}
-                    rowDurationMin={WEEK_TIMELINE_STEP_MIN}
+                    weekRowHeightPx={WEEK_SLOT_HEIGHT_PX}
                     holidaysByDateKey={holidaysByDateKey}
                     toDateKeyLocal={toDateKeyLocal}
                     weekdayShortRu={WEEKDAY_LONG_RU}
+                    weekDayEmployeeLabelByDateKey={weekDayEmployeeLabelByDateKey}
+                    weekCollapsedRangeByMinute={weekCollapsedRangeByMinute}
                     headerControls={renderAppointmentVisibilityToggles("justify-end")}
                     formatMinuteLabel={formatMinuteLabel}
-                    isAutoScrollTimeRow={isAutoScrollTimeRow}
-                    renderWeekAggregateCell={renderWeekAggregateCell}
+                    renderWeekTimelineRow={renderWeekTimelineRow}
+                    renderWeekTimelineDayOverlay={renderWeekTimelineDayOverlay}
                   />
                 ) : (
                   <DayTimeline
@@ -4032,6 +5622,8 @@ export default function AppointmentsPageClient({
                     toDateKeyLocal={toDateKeyLocal}
                     weekdayShortRu={WEEKDAY_SHORT_RU}
                     headerControls={renderAppointmentVisibilityToggles("justify-end")}
+                    dayCollapsedRangeByDayMinuteKey={dayCollapsedRangeByDayMinuteKey}
+                    daySubSlotCount={daySubSlotCount}
                     dayTimeColumnWidth={dayTimeColumnWidth}
                     dayEmployeeMinColumnWidth={dayEmployeeMinColumnWidth}
                     dayTimeRowClass={dayTimeRowClass}
@@ -4044,14 +5636,14 @@ export default function AppointmentsPageClient({
               </div>
             </TabsContent>
 
-            <TabsContent value="list" className="mt-0">
-              <Card className="border-border/80 bg-background">
+            <TabsContent value="list" className="mt-0 min-h-0 overflow-hidden">
+              <Card className="h-full min-h-0 border-border/80 bg-background">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Список записей {view === "day" ? "на день" : "в диапазоне"}</CardTitle>
                   <CardDescription>Клик по карточке открывает просмотр, а справа доступен быстрый переход на следующий статус</CardDescription>
                   {renderAppointmentVisibilityToggles("pt-1")}
                 </CardHeader>
-                <CardContent>
+                <CardContent className="min-h-0 flex-1 overflow-auto">
                   <div className="space-y-2">
                     {visibleSelectedDayAppointments.length === 0 ? (
                       <div className="text-muted-foreground rounded-lg border border-dashed px-4 py-6 text-center text-sm">
@@ -4109,7 +5701,9 @@ export default function AppointmentsPageClient({
                                 })}
                                 {" · "}
                                 {employee?.name || appointment.employeeId}
-                                {appointment.clientPhone ? ` · ${appointment.clientPhone}` : ""}
+                                {formatAppointmentPhoneDisplay(appointment.clientPhone)
+                                  ? ` · ${formatAppointmentPhoneDisplay(appointment.clientPhone)}`
+                                  : ""}
                               </div>
                               {appointment.clientIin ? (
                                 <div className="text-muted-foreground mt-1 text-xs">
@@ -4306,6 +5900,7 @@ export default function AppointmentsPageClient({
         appointmentPreviewStartIso={appointmentPreviewStartIso}
         appointmentPreviewEndIso={appointmentPreviewEndIso}
         appointmentDurationMin={appointmentDurationMin}
+        appointmentDurationInput={appointmentDurationInput}
         appointmentDurationStepMin={
           appointmentDialogMode === "create" ? appointmentDurationStepMin : BOOKING_STEP_MIN
         }
@@ -4322,6 +5917,29 @@ export default function AppointmentsPageClient({
           onChange: handleAppointmentPrepaidAmountInputChange,
           onBlur: handleAppointmentPrepaidAmountInputBlur,
         }}
+        serviceOptions={appointmentServiceOptions}
+        clientOptions={appointmentClientOptions}
+        selectedClientLabel={
+          selectedAppointmentClient
+            ? appointmentClientOptions.find((item) => item.value === selectedAppointmentClient.id)?.label || selectedAppointmentClient.fullName
+            : null
+        }
+        selectedServiceLabel={
+          activeDialogAppointment?.serviceNameSnapshot
+            ? `${activeDialogAppointment.serviceNameSnapshot}${activeDialogAppointment.serviceDurationMinSnapshot ? ` · ${formatDurationRu(activeDialogAppointment.serviceDurationMinSnapshot)}` : ""}`
+            : selectedAppointmentService
+              ? `${selectedAppointmentService.name} · ${formatDurationRu(selectedAppointmentService.durationMin)}`
+              : null
+        }
+        onClientChange={handleAppointmentClientChange}
+        onCreateClient={handleAppointmentClientCreate}
+        onServiceChange={handleAppointmentServiceChange}
+        onOpenCreateService={openCreateServiceDialog}
+        onOpenEditService={(serviceId) => {
+          const service = servicesById.get(serviceId);
+          if (service) openEditServiceDialog(service);
+        }}
+        showClientFields={appointmentDialogMode === "view" || appointmentClientDetailsOpen}
         patchAppointmentForm={patchAppointmentForm}
         appointmentIinPreview={appointmentIinPreview}
         getGenderLabelRu={getGenderLabelRu}
@@ -4330,7 +5948,9 @@ export default function AppointmentsPageClient({
         onStartTimeChange={handleAppointmentStartTimeChange}
         onDurationPresetSelect={handleAppointmentDurationPresetSelect}
         onDurationInputChange={handleAppointmentDurationInputChange}
+        onDurationInputBlur={handleAppointmentDurationInputBlur}
         normalizeIin={normalizeIin}
+        normalizePhoneInput={normalizeAppointmentPhoneInput}
         onSubmit={submitAppointment}
         saving={appointmentSaving}
       />
@@ -4355,17 +5975,43 @@ export default function AppointmentsPageClient({
               <Input value={employeeForm.specialty} onChange={(e) => setEmployeeForm((prev) => ({ ...prev, specialty: e.target.value }))} />
             </div>
             <div className="grid gap-2">
+              <Label>Фото</Label>
+              <Input
+                value={employeeForm.photoUrl}
+                placeholder="https://..."
+                onChange={(e) => setEmployeeForm((prev) => ({ ...prev, photoUrl: e.target.value }))}
+              />
+              <div className="text-muted-foreground text-xs">Можно указать ссылку на фото сотрудника.</div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Описание</Label>
+              <Textarea
+                value={employeeForm.description}
+                placeholder="Кратко о сотруднике, опыте или направлении"
+                onChange={(e) => setEmployeeForm((prev) => ({ ...prev, description: e.target.value }))}
+              />
+            </div>
+            <div className="grid gap-2">
               <Label>Слот (мин)</Label>
               <Input
-                type="number"
-                min={BOOKING_STEP_MIN}
-                step={BOOKING_STEP_MIN}
-                value={employeeForm.slotDurationMin}
+                type="text"
+                inputMode="numeric"
+                value={employeeSlotDurationInput}
                 onChange={(e) => {
-                  const next = Number(e.target.value);
+                  const digits = digitsOnly(e.target.value);
+                  setEmployeeSlotDurationInput(digits);
+                  if (!digits) {
+                    setEmployeeForm((prev) => ({
+                      ...prev,
+                      slotDurationMin: 0,
+                    }));
+                    return;
+                  }
+
+                  const next = Number(digits);
                   setEmployeeForm((prev) => ({
                     ...prev,
-                    slotDurationMin: Number.isFinite(next) ? next : BOOKING_STEP_MIN,
+                    slotDurationMin: Number.isFinite(next) ? next : 0,
                   }));
                 }}
               />
@@ -4375,7 +6021,7 @@ export default function AppointmentsPageClient({
               <Label>Ставка</Label>
               <div className="grid grid-cols-[160px_1fr] gap-2">
                 <select
-                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                  className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
                   value={employeeForm.compensationType}
                   onChange={(e) => {
                     const nextCompensationType = e.target.value as BookingCompensationType;
@@ -4386,7 +6032,7 @@ export default function AppointmentsPageClient({
                     }));
                     setEmployeeCompensationValueInput((prev) => {
                       if (!prev) return prev;
-                      const digits = prev.replace(/\D/g, "");
+                      const digits = digitsOnly(prev);
                       const normalizedValue = clampEmployeeCompensationValue(
                         digits ? Number(digits) : 0,
                         nextCompensationType,
@@ -4405,9 +6051,13 @@ export default function AppointmentsPageClient({
                     value={employeeCompensationValueInput}
                     className="pr-10"
                     onChange={(e) => {
-                      const digits = e.target.value.replace(/\D/g, "");
+                      const digits = digitsOnly(e.target.value);
                       if (!digits) {
                         setEmployeeCompensationValueInput("");
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          compensationValue: 0,
+                        }));
                         return;
                       }
 
@@ -4416,14 +6066,6 @@ export default function AppointmentsPageClient({
                       setEmployeeForm((prev) => ({
                         ...prev,
                         compensationValue: normalizedValue,
-                      }));
-                    }}
-                    onBlur={() => {
-                      if (employeeCompensationValueInput.trim() !== "") return;
-                      setEmployeeCompensationValueInput("0");
-                      setEmployeeForm((prev) => ({
-                        ...prev,
-                        compensationValue: 0,
                       }));
                     }}
                   />
@@ -4474,6 +6116,299 @@ export default function AppointmentsPageClient({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={serviceDialogOpen} onOpenChange={handleServiceDialogOpenChange}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{serviceDialogMode === "edit" ? "Редактировать услугу" : "Новая услуга"}</DialogTitle>
+            <DialogDescription>
+              У услуги есть базовая цена. Персональные цены сотрудников работают как оверрайд поверх нее.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-end">
+              <div className="grid gap-2">
+                <Label>Название</Label>
+                <Input
+                  value={serviceForm.name}
+                  onChange={(e) => setServiceForm((prev) => ({ ...prev, name: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Активна</Label>
+                <div className="flex h-10 items-center justify-between rounded-md border border-border/70 bg-muted/20 px-3">
+                  <span className="text-sm">Показывать в записи</span>
+                  <Switch
+                    checked={serviceForm.isActive}
+                    onCheckedChange={(checked) =>
+                      setServiceForm((prev) => ({
+                        ...prev,
+                        isActive: checked,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="grid gap-2">
+                <Label>Тип записи</Label>
+                <select
+                  className="border-input bg-background h-10 rounded-md border px-3 text-sm"
+                  value={serviceForm.serviceType}
+                  onChange={(e) =>
+                    setServiceForm((prev) => ({
+                      ...prev,
+                      serviceType: e.target.value as BookingAppointmentType,
+                    }))
+                  }
+                >
+                  {SERVICE_APPOINTMENT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Длительность (мин)</Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={serviceForm.durationInput}
+                  onChange={(e) => {
+                    const digits = digitsOnly(e.target.value);
+                    setServiceForm((prev) => ({
+                      ...prev,
+                      durationInput: digits,
+                      durationMin: digits ? Number(digits) : 0,
+                    }));
+                  }}
+                  onBlur={() => {
+                    const normalized = clampAppointmentDurationMin(
+                      serviceForm.durationInput,
+                      FALLBACK_APPOINTMENT_DURATION_MIN,
+                    );
+                    setServiceForm((prev) => ({
+                      ...prev,
+                      durationMin: normalized,
+                      durationInput: String(normalized),
+                    }));
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
+              <div className="grid gap-2">
+                <Label>Базовая цена</Label>
+                <div className="relative">
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    className="pr-8"
+                    value={serviceForm.basePriceInput}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const digits = digitsOnly(e.target.value);
+                      if (!digits) {
+                        setServiceForm((prev) => ({
+                          ...prev,
+                          basePrice: 0,
+                          basePriceInput: "",
+                        }));
+                        return;
+                      }
+
+                      const nextPrice = Math.max(0, Math.round(Number(digits) || 0));
+                      setServiceForm((prev) => ({
+                        ...prev,
+                        basePrice: nextPrice,
+                        basePriceInput: String(nextPrice),
+                      }));
+                    }}
+                  />
+                  <span className="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm">
+                    ₸
+                  </span>
+                </div>
+              </div>
+              <div className="rounded-md border border-border/70 bg-muted/15 px-3 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <label className="flex min-w-0 items-start gap-3">
+                    <Checkbox
+                      checked={serviceHasCustomPrices}
+                      disabled={!employees.length}
+                      onCheckedChange={(value) => handleServicePersonalPriceToggle(value === true)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">Персональные цены</span>
+                      <span className="text-muted-foreground block text-xs">
+                        Без персональной цены используется базовая цена.
+                      </span>
+                    </span>
+                  </label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setServicePriceDialogOpen(true)}
+                    disabled={!employees.length}
+                  >
+                    Выбрать
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>Категория</Label>
+                <Input
+                  value={serviceForm.category}
+                  placeholder="Консультации"
+                  onChange={(e) => setServiceForm((prev) => ({ ...prev, category: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Направление</Label>
+                <Input
+                  value={serviceForm.direction}
+                  placeholder="Кардиология"
+                  onChange={(e) => setServiceForm((prev) => ({ ...prev, direction: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Описание</Label>
+              <Textarea
+                value={serviceForm.description}
+                placeholder="Что входит в услугу, кому подходит и другие детали"
+                onChange={(e) => setServiceForm((prev) => ({ ...prev, description: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleServiceDialogOpenChange(false)}>
+              Отмена
+            </Button>
+            <Button onClick={submitService} disabled={serviceSaving}>
+              {serviceSaving ? "Сохраняю..." : serviceDialogMode === "edit" ? "Сохранить" : "Создать"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={servicePriceDialogOpen} onOpenChange={setServicePriceDialogOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Персональные цены сотрудников</DialogTitle>
+            <DialogDescription>
+              Отмеченные сотрудники используют свою цену и ставку. Для остальных действует базовая цена услуги.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] space-y-2 overflow-auto pr-1">
+            {serviceForm.employeePrices.length === 0 ? (
+              <div className="text-muted-foreground rounded-md border border-dashed px-3 py-6 text-center text-sm">
+                Сначала создайте хотя бы одного сотрудника, затем можно будет настроить персональные цены.
+              </div>
+            ) : (
+              serviceForm.employeePrices.map((row) => {
+                const employee = employeesById.get(row.employeeId);
+                if (!employee) return null;
+
+                return (
+                  <div
+                    key={`service-price-${row.employeeId}`}
+                    className="grid gap-3 rounded-md border border-border/60 bg-muted/10 px-3 py-3 lg:grid-cols-[minmax(0,1fr)_120px_130px_130px]"
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <label className="mt-1">
+                        <Checkbox
+                          checked={row.enabled}
+                          onCheckedChange={(value) => handleServicePriceToggle(row.employeeId, value === true)}
+                        />
+                      </label>
+                      <Avatar className="size-9 border border-border/70">
+                        <AvatarImage src={employee.photoUrl || undefined} alt={employee.name} />
+                        <AvatarFallback className="text-[11px] font-medium">
+                          {getNameInitials(employee.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">{employee.name}</div>
+                        <div className="text-muted-foreground truncate text-xs">
+                          {employee.specialty || "Без специализации"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">Цена</Label>
+                      <div className="relative">
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          disabled={!row.enabled}
+                          className="pr-8"
+                          value={row.priceInput}
+                          placeholder={serviceForm.basePrice > 0 ? String(serviceForm.basePrice) : "0"}
+                          onChange={(e) => handleServicePriceInputChange(row.employeeId, e.target.value)}
+                        />
+                        <span className="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm">
+                          ₸
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">Ставка</Label>
+                      <select
+                        className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                        value={row.compensationType}
+                        disabled={!row.enabled}
+                        onChange={(e) =>
+                          handleServicePriceCompensationTypeChange(
+                            row.employeeId,
+                            e.target.value as BookingCompensationType,
+                          )
+                        }
+                      >
+                        <option value="percent">Процент</option>
+                        <option value="fixed">Фикс</option>
+                      </select>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">Значение ставки</Label>
+                      <div className="relative">
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          disabled={!row.enabled}
+                          className="pr-8"
+                          value={row.compensationValueInput}
+                          placeholder="0"
+                          onChange={(e) =>
+                            handleServicePriceCompensationValueInputChange(row.employeeId, e.target.value)
+                          }
+                        />
+                        <span className="text-muted-foreground pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm">
+                          {row.compensationType === "percent" ? "%" : "₸"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setServicePriceDialogOpen(false)}>
+              Готово
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
         <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-auto">
           <DialogHeader>
@@ -4498,7 +6433,7 @@ export default function AppointmentsPageClient({
                 <div className="mb-3 grid gap-2 sm:max-w-sm">
                   <Label>Сотрудник</Label>
                   <select
-                    className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                    className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
                     value={scheduleEmployeeId}
                     onChange={(e) => {
                       const nextId = e.target.value;
@@ -4512,6 +6447,17 @@ export default function AppointmentsPageClient({
                       </option>
                     ))}
                   </select>
+                </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={applyScheduleWeekdayPreset}>
+                    Будни
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={applyScheduleLunchPreset}>
+                    Обед
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={resetScheduleEditor}>
+                    Сбросить
+                  </Button>
                 </div>
                 <div className="rounded-lg border">
                   <div className="min-w-[980px]">
@@ -4609,6 +6555,75 @@ export default function AppointmentsPageClient({
                     </div>
                   </div>
                 </div>
+                <div className="mt-4 space-y-3 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold">Конкретные рабочие дни</div>
+                      <div className="text-muted-foreground text-xs">
+                        Используются как разовые рабочие исключения и перекрывают обычный недельный график.
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openCreateWorkdayOverrideDialog()}
+                      disabled={!employees.length}
+                    >
+                      Добавить
+                    </Button>
+                  </div>
+                  <div className="space-y-2">
+                    {scheduleWorkdayOverridePreview.length === 0 ? (
+                      <div className="text-muted-foreground rounded-md border border-dashed px-3 py-4 text-sm">
+                        Для выбранного сотрудника пока нет конкретных рабочих дней.
+                      </div>
+                    ) : (
+                      scheduleWorkdayOverridePreview.map((item) => (
+                        <div
+                          key={item.id}
+                          className="rounded-md border bg-sky-50/60 px-3 py-2 text-sm dark:border-sky-900/60 dark:bg-sky-950/30"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-medium">{item.dateLabel}</div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7"
+                                title="Редактировать рабочий день"
+                                aria-label="Редактировать рабочий день"
+                                onClick={() => openEditWorkdayOverrideDialog(item)}
+                              >
+                                <Pencil className="size-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7 text-sky-700 hover:text-sky-700 dark:text-sky-200"
+                                title="Удалить рабочий день"
+                                aria-label="Удалить рабочий день"
+                                onClick={() => setPendingWorkdayOverrideDeletion(item)}
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="text-muted-foreground text-xs">
+                            {formatMinuteLabel(item.startMinute)} - {formatMinuteLabel(item.endMinute)}
+                          </div>
+                          {item.breakStartMinute !== null && item.breakEndMinute !== null ? (
+                            <div className="text-muted-foreground text-xs">
+                              {item.breakTitle || "Перерыв"} · {formatMinuteLabel(item.breakStartMinute)} -{" "}
+                              {formatMinuteLabel(item.breakEndMinute)}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </TabsContent>
 
               <TabsContent value="exceptions" className="mt-0">
@@ -4688,7 +6703,7 @@ export default function AppointmentsPageClient({
                     <div className="grid gap-2 sm:max-w-xs">
                       <Label>Сотрудник</Label>
                       <select
-                        className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                        className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
                         value={timeOffEmployeeFilterId}
                         onChange={(e) => setTimeOffEmployeeFilterId(e.target.value)}
                       >
@@ -4806,6 +6821,116 @@ export default function AppointmentsPageClient({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={workdayOverrideDialogOpen} onOpenChange={handleWorkdayOverrideDialogOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {workdayOverrideDialogMode === "edit" ? "Редактировать конкретный рабочий день" : "Добавить конкретный рабочий день"}
+            </DialogTitle>
+            <DialogDescription>
+              Этот день работает как индивидуальное исключение для сотрудника и перекрывает обычный график по дню недели, включая перерыв.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <Label>Сотрудник</Label>
+              <select
+                className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                value={workdayOverrideForm.employeeId}
+                onChange={(e) => setWorkdayOverrideForm((prev) => ({ ...prev, employeeId: e.target.value }))}
+              >
+                {employees.length === 0 ? <option value="">Нет сотрудников</option> : null}
+                {employees.map((employee) => (
+                  <option key={employee.id} value={employee.id}>
+                    {employee.name} {employee.specialty ? `· ${employee.specialty}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <Label>Дата</Label>
+              <DatePickerPopover
+                value={workdayOverrideForm.date}
+                onChange={(value) => setWorkdayOverrideForm((prev) => ({ ...prev, date: value }))}
+                placeholder="Выберите дату"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2">
+                <Label>Начало</Label>
+                <TimePicker24h
+                  value={workdayOverrideForm.startTime}
+                  onChange={(value) => setWorkdayOverrideForm((prev) => ({ ...prev, startTime: value }))}
+                  minuteStep={BOOKING_STEP_MIN}
+                  placeholder="Начало"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Конец</Label>
+                <TimePicker24h
+                  value={workdayOverrideForm.endTime}
+                  onChange={(value) => setWorkdayOverrideForm((prev) => ({ ...prev, endTime: value }))}
+                  minuteStep={BOOKING_STEP_MIN}
+                  placeholder="Конец"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+              <div className="grid gap-0.5">
+                <Label className="text-sm">Разовый перерыв</Label>
+                <div className="text-muted-foreground text-xs">
+                  Если включён, заменяет обычный перерыв только для этой даты.
+                </div>
+              </div>
+              <Switch
+                checked={workdayOverrideForm.breakEnabled}
+                onCheckedChange={(checked) => setWorkdayOverrideForm((prev) => ({ ...prev, breakEnabled: checked }))}
+              />
+            </div>
+            {workdayOverrideForm.breakEnabled ? (
+              <>
+                <div className="grid gap-2">
+                  <Label>Название перерыва</Label>
+                  <Input
+                    value={workdayOverrideForm.breakTitle}
+                    onChange={(e) => setWorkdayOverrideForm((prev) => ({ ...prev, breakTitle: e.target.value }))}
+                    placeholder="Перерыв"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-2">
+                    <Label>Начало перерыва</Label>
+                    <TimePicker24h
+                      value={workdayOverrideForm.breakStartTime}
+                      onChange={(value) => setWorkdayOverrideForm((prev) => ({ ...prev, breakStartTime: value }))}
+                      minuteStep={BOOKING_STEP_MIN}
+                      placeholder="Начало перерыва"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Конец перерыва</Label>
+                    <TimePicker24h
+                      value={workdayOverrideForm.breakEndTime}
+                      onChange={(value) => setWorkdayOverrideForm((prev) => ({ ...prev, breakEndTime: value }))}
+                      minuteStep={BOOKING_STEP_MIN}
+                      placeholder="Конец перерыва"
+                    />
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleWorkdayOverrideDialogOpenChange(false)}>
+              Отмена
+            </Button>
+            <Button onClick={submitWorkdayOverride} disabled={workdayOverrideSaving}>
+              {workdayOverrideSaving ? "Сохраняю..." : workdayOverrideDialogMode === "edit" ? "Сохранить" : "Добавить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={timeOffDialogOpen} onOpenChange={handleTimeOffDialogOpenChange}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
@@ -4821,7 +6946,7 @@ export default function AppointmentsPageClient({
               <div className="grid gap-2">
                 <Label>Сотрудник</Label>
                 <select
-                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                  className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
                   value={timeOffForm.employeeId}
                   onChange={(e) => setTimeOffForm((prev) => ({ ...prev, employeeId: e.target.value }))}>
                   <option value="all">Все сотрудники</option>
@@ -4835,7 +6960,7 @@ export default function AppointmentsPageClient({
               <div className="grid gap-2">
                 <Label>Тип</Label>
                 <select
-                  className="border-input bg-background h-9 rounded-md border px-3 text-sm"
+                  className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
                   value={timeOffForm.type}
                   onChange={(e) => setTimeOffForm((prev) => ({ ...prev, type: e.target.value }))}>
                   <option value="vacation">Отпуск</option>
@@ -4951,6 +7076,70 @@ export default function AppointmentsPageClient({
               disabled={holidayDeleting}
             >
               {holidayDeleting ? "Удаляю..." : "Да, удалить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingWorkdayOverrideDeletion)}
+        onOpenChange={(open) => {
+          if (!open && !workdayOverrideDeleting) {
+            setPendingWorkdayOverrideDeletion(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Удалить конкретный рабочий день</DialogTitle>
+            <DialogDescription>
+              После удаления эта дата снова будет работать только по обычному недельному графику.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingWorkdayOverrideDeletion ? (
+            <div className="grid gap-3 text-sm">
+              <div className="rounded-lg border bg-muted/20 px-3 py-2">
+                <div className="text-muted-foreground text-xs">Сотрудник</div>
+                <div className="font-medium">{pendingWorkdayOverrideDeletion.employeeLabel}</div>
+              </div>
+              <div className="rounded-lg border px-3 py-2">
+                <div className="text-muted-foreground text-xs">Дата</div>
+                <div>{pendingWorkdayOverrideDeletion.dateLabel}</div>
+              </div>
+              <div className="rounded-lg border px-3 py-2">
+                <div className="text-muted-foreground text-xs">Время</div>
+                <div>
+                  {formatMinuteLabel(pendingWorkdayOverrideDeletion.startMinute)} -{" "}
+                  {formatMinuteLabel(pendingWorkdayOverrideDeletion.endMinute)}
+                </div>
+              </div>
+              {pendingWorkdayOverrideDeletion.breakStartMinute !== null &&
+              pendingWorkdayOverrideDeletion.breakEndMinute !== null ? (
+                <div className="rounded-lg border px-3 py-2">
+                  <div className="text-muted-foreground text-xs">Перерыв</div>
+                  <div>
+                    {pendingWorkdayOverrideDeletion.breakTitle || "Перерыв"} ·{" "}
+                    {formatMinuteLabel(pendingWorkdayOverrideDeletion.breakStartMinute)} -{" "}
+                    {formatMinuteLabel(pendingWorkdayOverrideDeletion.breakEndMinute)}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingWorkdayOverrideDeletion(null)}
+              disabled={workdayOverrideDeleting}
+            >
+              Нет
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmWorkdayOverrideDeletion}
+              disabled={workdayOverrideDeleting}
+            >
+              {workdayOverrideDeleting ? "Удаляю..." : "Да, удалить"}
             </Button>
           </DialogFooter>
         </DialogContent>
