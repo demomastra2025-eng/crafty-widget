@@ -260,6 +260,27 @@ export function useChatwoot(): [boolean, ChatwootPayload | null, Error | null] {
     };
 
     const onMessage = (event: MessageEvent) => {
+      if (window.parent && window.parent !== window && event.source !== window.parent) {
+        return;
+      }
+
+      const payload = event.data;
+      if (
+        payload == null ||
+        (typeof payload !== "string" &&
+          typeof payload !== "object" &&
+          !Array.isArray(payload))
+      ) {
+        return;
+      }
+
+      if (typeof payload === "string") {
+        const trimmed = payload.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+          return;
+        }
+      }
+
       const next = parseChatwootPayload(event.data);
       if (!next) return;
       applyPayload(next);
