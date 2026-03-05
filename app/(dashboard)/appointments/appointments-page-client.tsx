@@ -182,8 +182,10 @@ const BOOKING_STEP_MIN = 5;
 const TIMELINE_STEP_MIN = 30;
 const FALLBACK_APPOINTMENT_DURATION_MIN = TIMELINE_STEP_MIN;
 const CALENDAR_AVAILABILITY_DURATION_MIN = BOOKING_STEP_MIN;
-const WEEK_CASCADE_VISIBLE_EMPLOYEES = 4;
 const WEEK_SLOT_HEIGHT_PX = 40;
+const WEEK_GRID_TARGET_WIDTH_PX = 920;
+const WEEK_TIME_COLUMN_WIDTH_PX = 52;
+const WEEK_DAY_MIN_COLUMN_WIDTH_PX = 92;
 const WEEK_OVERLAY_LEFT_GUTTER_PX = 18;
 const WEEK_OVERLAY_CASCADE_OFFSET_PX = 12;
 const APPOINTMENT_PHONE_INPUT_LENGTH = 11;
@@ -1668,6 +1670,19 @@ export default function AppointmentsPageClient({
     return Array.from({ length: 42 }, (_, index) => addDays(monthGridStart, index));
   }, [anchorDate]);
 
+  const weekCascadeVisibleEmployees = useMemo(() => {
+    const weekDaysCount = Math.max(dayListForTimeline.length, 1);
+    const weekDayMinColumnWidth = Math.max(
+      WEEK_DAY_MIN_COLUMN_WIDTH_PX,
+      Math.floor((WEEK_GRID_TARGET_WIDTH_PX - WEEK_TIME_COLUMN_WIDTH_PX) / weekDaysCount),
+    );
+    const maxCascadeIndexByColumn = Math.floor(
+      Math.max(0, weekDayMinColumnWidth - WEEK_OVERLAY_LEFT_GUTTER_PX - 1) / WEEK_OVERLAY_CASCADE_OFFSET_PX,
+    );
+
+    return Math.max(1, maxCascadeIndexByColumn + 1);
+  }, [dayListForTimeline.length]);
+
   const activeAppointments = useMemo(
     () => (calendarData?.appointments || []).filter((appointment) => appointmentIsActive(appointment.status)),
     [calendarData?.appointments],
@@ -1695,7 +1710,7 @@ export default function AppointmentsPageClient({
     activeAppointments,
     baseTimelineStepMin: TIMELINE_STEP_MIN,
     bookingStepMin: BOOKING_STEP_MIN,
-    weekCascadeVisibleEmployees: WEEK_CASCADE_VISIBLE_EMPLOYEES,
+    weekCascadeVisibleEmployees,
   });
   const activeDialogAppointment = useMemo(
     () =>
@@ -2025,8 +2040,11 @@ export default function AppointmentsPageClient({
   ]);
 
   const weekDaysCount = Math.max(dayListForTimeline.length, 1);
-  const weekTimeColumnWidth = 52;
-  const weekDayMinColumnWidth = Math.max(92, Math.floor((920 - weekTimeColumnWidth) / weekDaysCount));
+  const weekTimeColumnWidth = WEEK_TIME_COLUMN_WIDTH_PX;
+  const weekDayMinColumnWidth = Math.max(
+    WEEK_DAY_MIN_COLUMN_WIDTH_PX,
+    Math.floor((WEEK_GRID_TARGET_WIDTH_PX - weekTimeColumnWidth) / weekDaysCount),
+  );
   const weekGridMinWidth = weekTimeColumnWidth + weekDayMinColumnWidth * weekDaysCount;
   const weekHeaderTitle = `Неделя ${getWeekOfMonth(anchorDate)}`;
   const weekHeaderSubtitle = getEmployeeCountLabelRu(visibleEmployees.length);
@@ -2817,6 +2835,53 @@ export default function AppointmentsPageClient({
     } else {
       patchAppointmentForm({
         serviceId: nextServiceId,
+        appointmentType: nextAppointmentType,
+        durationMin: nextDurationMin,
+      });
+    }
+
+    setSlotDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        endsAt: addMinutesToIso(prev.startsAt, nextDurationMin),
+      };
+    });
+  };
+
+  const applyServiceSelectionToAppointmentForm = (service: BookingService) => {
+    if (!appointmentDialogOpen) return;
+
+    const customPrice = selectedAppointmentEmployeeId
+      ? service.prices.find(
+        (item) => item.employeeId === selectedAppointmentEmployeeId && item.isActive && item.price > 0,
+      )
+      : null;
+    const resolvedPrice = customPrice?.price || service.basePrice;
+    const nextAppointmentType =
+      inferAppointmentTypeFromServiceType(service.serviceType) || appointmentForm.appointmentType;
+    const nextDurationMin = alignDurationToStep(
+      service.durationMin,
+      appointmentDurationStepMin,
+      appointmentDurationStepMin,
+    );
+
+    setAppointmentDurationInput(String(nextDurationMin));
+    if (appointmentDialogMode === "create") {
+      setSlotAvailabilityDurationMin(nextDurationMin);
+    }
+
+    if (resolvedPrice > 0) {
+      setAppointmentServiceAmountInput(String(resolvedPrice));
+      patchAppointmentForm({
+        serviceId: service.id,
+        appointmentType: nextAppointmentType,
+        durationMin: nextDurationMin,
+        serviceAmount: resolvedPrice,
+      });
+    } else {
+      patchAppointmentForm({
+        serviceId: service.id,
         appointmentType: nextAppointmentType,
         durationMin: nextDurationMin,
       });
@@ -3697,6 +3762,12 @@ export default function AppointmentsPageClient({
           isActive: serviceForm.isActive,
           employeePrices,
         }, requestContext);
+        setServiceCatalog((prev) => {
+          const nextCatalog = prev.filter((item) => item.id !== result.service.id);
+          nextCatalog.push(result.service);
+          return nextCatalog;
+        });
+        applyServiceSelectionToAppointmentForm(result.service);
         toast({ title: `Услуга создана: ${result.service.name}` });
       }
 

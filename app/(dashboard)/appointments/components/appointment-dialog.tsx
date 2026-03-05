@@ -278,7 +278,7 @@ export function AppointmentDialog({
                 <div className="grid min-w-0 gap-2">
                   <Label>Сотрудник</Label>
                   <select
-                    className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                    className="border-input bg-background h-9 w-full min-w-0 rounded-md border pl-3 pr-10 text-sm"
                     value={slotDraft?.employeeId || ""}
                     onChange={(e) => onSlotEmployeeChange(e.target.value)}
                     disabled={isReadOnly}
@@ -296,7 +296,7 @@ export function AppointmentDialog({
               <div className="grid min-w-0 gap-2">
                 <Label>Тип записи</Label>
                 <select
-                  className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                  className="border-input bg-background h-9 w-full min-w-0 rounded-md border pl-3 pr-10 text-sm"
                   value={appointmentForm.appointmentType}
                   onChange={(e) => patchAppointmentForm({ appointmentType: e.target.value as BookingAppointmentType })}
                   disabled={isReadOnly}
@@ -313,7 +313,7 @@ export function AppointmentDialog({
                 <div className="grid min-w-0 gap-2">
                   <Label>Статус записи</Label>
                   <select
-                    className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                    className="border-input bg-background h-9 w-full min-w-0 rounded-md border pl-3 pr-10 text-sm"
                     value={appointmentStatus || "scheduled"}
                     onChange={(e) => onStatusChange?.(e.target.value)}
                   >
@@ -340,7 +340,7 @@ export function AppointmentDialog({
                 <div className="grid min-w-0 gap-2">
                   <Label>Время начала</Label>
                   <select
-                    className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                    className="border-input bg-background h-9 w-full min-w-0 rounded-md border pl-3 pr-10 text-sm"
                     value={slotDraft?.startsAt}
                     onChange={(e) => onStartTimeChange?.(e.target.value)}
                     disabled={isReadOnly}
@@ -465,7 +465,7 @@ export function AppointmentDialog({
                 <div className="grid min-w-0 gap-2">
                   <Label>Способ оплаты</Label>
                   <select
-                    className="border-input bg-background h-9 rounded-md border pl-3 pr-10 text-sm"
+                    className="border-input bg-background h-9 w-full min-w-0 rounded-md border pl-3 pr-10 text-sm"
                     value={appointmentForm.prepaidPaymentMethod}
                     onChange={(e) => patchAppointmentForm({ prepaidPaymentMethod: e.target.value as BookingPaymentMethod })}
                     disabled={isReadOnly || !paymentMethodOptions?.length}
