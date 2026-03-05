@@ -327,6 +327,8 @@ export default function KassaPageClient({
 
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [paymentDialogAppointmentId, setPaymentDialogAppointmentId] = useState<string | null>(null);
+  const [paymentCancelDialogOpen, setPaymentCancelDialogOpen] = useState(false);
+  const [paymentCancelAppointmentId, setPaymentCancelAppointmentId] = useState<string | null>(null);
   const [paymentAmount, setPaymentAmount] = useState(0);
   const [paymentAmountInput, setPaymentAmountInput] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("kaspi_transfer");
@@ -418,6 +420,9 @@ export default function KassaPageClient({
   const selectedPaymentAppointment = paymentDialogAppointmentId
     ? appointmentsById.get(paymentDialogAppointmentId) || null
     : null;
+  const selectedPaymentCancelAppointment = paymentCancelAppointmentId
+    ? appointmentsById.get(paymentCancelAppointmentId) || null
+    : null;
 
   const refresh = () => setRefreshTick((value) => value + 1);
 
@@ -437,6 +442,13 @@ export default function KassaPageClient({
     setPaymentAmount(0);
     setPaymentAmountInput("");
     setPaymentMethod("kaspi_transfer");
+  };
+
+  const handlePaymentCancelDialogOpenChange = (open: boolean) => {
+    if (!open && appointmentStatusSavingId) return;
+    setPaymentCancelDialogOpen(open);
+    if (open) return;
+    setPaymentCancelAppointmentId(null);
   };
 
   const submitPayment = async () => {
@@ -471,10 +483,17 @@ export default function KassaPageClient({
     }
   };
 
-  const cancelPayment = async (appointment: BookingAppointment) => {
-    setAppointmentStatusSavingId(appointment.id);
+  const openCancelPaymentDialog = (appointment: BookingAppointment) => {
+    setPaymentCancelAppointmentId(appointment.id);
+    setPaymentCancelDialogOpen(true);
+  };
+
+  const confirmCancelPayment = async () => {
+    if (!paymentCancelAppointmentId) return;
+    setAppointmentStatusSavingId(paymentCancelAppointmentId);
     try {
-      await cancelBookingAppointmentPayment(appointment.id, requestContext);
+      await cancelBookingAppointmentPayment(paymentCancelAppointmentId, requestContext);
+      handlePaymentCancelDialogOpenChange(false);
       refresh();
       toast({ title: "Оплата отменена" });
     } catch (error) {
@@ -776,7 +795,7 @@ export default function KassaPageClient({
                             payments={paymentsByAppointmentId.get(appointment.id) || []}
                             actionSaving={appointmentStatusSavingId === appointment.id}
                             onAddPayment={openPaymentDialog}
-                            onCancelPayment={(item) => void cancelPayment(item)}
+                            onCancelPayment={openCancelPaymentDialog}
                           />
                         ))}
                       </div>
@@ -1013,6 +1032,44 @@ export default function KassaPageClient({
             </Button>
             <Button className="rounded-xl" onClick={() => void submitPayment()} disabled={paymentSaving}>
               {paymentSaving ? "Сохраняю..." : "Добавить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={paymentCancelDialogOpen} onOpenChange={handlePaymentCancelDialogOpenChange}>
+        <DialogContent className="border-border/80 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Отменить оплату?</DialogTitle>
+            <DialogDescription>
+              {selectedPaymentCancelAppointment
+                ? `Прием: ${selectedPaymentCancelAppointment.clientName || "Без имени"} · ${formatTime(selectedPaymentCancelAppointment.startsAt)}`
+                : "Подтвердите отмену оплаты по выбранному приему."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPaymentCancelAppointment ? (
+            <div className="rounded-2xl border border-border/70 bg-muted/20 p-3 text-sm">
+              Будет отменено: {formatAmount(getReceivedAmount(selectedPaymentCancelAppointment))} тг
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={() => handlePaymentCancelDialogOpenChange(false)}
+              disabled={Boolean(appointmentStatusSavingId)}
+            >
+              Назад
+            </Button>
+            <Button
+              variant="destructive"
+              className="rounded-xl"
+              onClick={() => void confirmCancelPayment()}
+              disabled={Boolean(appointmentStatusSavingId)}
+            >
+              {appointmentStatusSavingId ? "Отменяю..." : "Подтвердить отмену"}
             </Button>
           </DialogFooter>
         </DialogContent>
