@@ -581,10 +581,10 @@ export function AppointmentDialog({
                       id="appt-phone"
                       type="text"
                       inputMode="numeric"
-                      maxLength={12}
+                      maxLength={10}
                       value={appointmentForm.clientPhone}
                       onChange={(e) => patchAppointmentForm({ clientPhone: normalizePhoneInput(e.target.value) })}
-                      placeholder="70012345678"
+                      placeholder="7012345678"
                       readOnly={isReadOnly}
                       className="placeholder:text-muted-foreground bg-muted/20 flex-1 px-3 text-sm outline-none"
                     />

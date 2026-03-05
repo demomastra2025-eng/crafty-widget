@@ -705,12 +705,12 @@ function normalizeAppointmentPhone(value: unknown): string | null {
 
   const digits = phone.replace(/\D/g, "");
   if (!digits) return null;
-  if (digits.length === 11) return `7${digits}`;
-  if (digits.length === 12 && (digits.startsWith("7") || digits.startsWith("8"))) {
-    return `7${digits.slice(1)}`;
+  if (digits.length === 10) return `7${digits}`;
+  if (digits.length >= 11 && (digits.startsWith("7") || digits.startsWith("8"))) {
+    return `7${digits.slice(1, 11)}`;
   }
 
-  throw new BookingServiceError(400, "VALIDATION_ERROR", "clientPhone must contain 11 digits after +7");
+  throw new BookingServiceError(400, "VALIDATION_ERROR", "clientPhone must contain 10 digits after +7");
 }
 
 function clampMoney(value: unknown, fallback = 0): number {

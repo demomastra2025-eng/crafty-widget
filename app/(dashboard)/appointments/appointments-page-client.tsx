@@ -188,7 +188,7 @@ const WEEK_TIME_COLUMN_WIDTH_PX = 52;
 const WEEK_DAY_MIN_COLUMN_WIDTH_PX = 92;
 const WEEK_OVERLAY_LEFT_GUTTER_PX = 18;
 const WEEK_OVERLAY_CASCADE_OFFSET_PX = 12;
-const APPOINTMENT_PHONE_INPUT_LENGTH = 11;
+const APPOINTMENT_PHONE_INPUT_LENGTH = 10;
 const DAY_SLOT_HEIGHT_PX = 64;
 const EMPLOYEE_NAME_MAX_LENGTH = 20;
 const EMPLOYEE_SPECIALTY_MAX_LENGTH = 15;
@@ -655,7 +655,7 @@ function normalizeAppointmentPhoneInput(value: string) {
 function toAppointmentPhoneInputValue(value: string | null | undefined) {
   const digits = digitsOnly(String(value || ""));
   if (!digits) return "";
-  if (digits.length >= APPOINTMENT_PHONE_INPUT_LENGTH + 1 && digits.startsWith("7")) {
+  if (digits.length >= APPOINTMENT_PHONE_INPUT_LENGTH + 1 && (digits.startsWith("7") || digits.startsWith("8"))) {
     return digits.slice(1, APPOINTMENT_PHONE_INPUT_LENGTH + 1);
   }
   if (digits.length === APPOINTMENT_PHONE_INPUT_LENGTH) return digits;
@@ -666,9 +666,6 @@ function serializeAppointmentPhone(value: string) {
   const digits = normalizeAppointmentPhoneInput(value);
   if (!digits) return null;
   if (digits.length === APPOINTMENT_PHONE_INPUT_LENGTH) return `7${digits}`;
-  if (digits.length === APPOINTMENT_PHONE_INPUT_LENGTH + 1 && (digits.startsWith("7") || digits.startsWith("8"))) {
-    return `7${digits.slice(1)}`;
-  }
   return null;
 }
 
@@ -3461,7 +3458,7 @@ export default function AppointmentsPageClient({
     }
     const clientPhone = serializeAppointmentPhone(appointmentForm.clientPhone);
     if (appointmentForm.clientPhone.trim() && !clientPhone) {
-      toast({ title: "Телефон должен содержать 11 цифр после +7" });
+      toast({ title: "Телефон должен содержать 10 цифр после +7" });
       return;
     }
     const iinNormalized = normalizeIin(appointmentForm.clientIin);

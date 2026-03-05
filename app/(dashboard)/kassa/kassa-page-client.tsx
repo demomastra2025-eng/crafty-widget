@@ -124,11 +124,9 @@ function formatPhone(value?: string | null) {
   const digits = String(value || "").replace(/\D/g, "");
   if (!digits) return null;
   const local =
-    digits.length > 11 && digits.startsWith("7")
-      ? digits.slice(1, 12)
-      : digits.length === 10
-        ? `7${digits}`
-        : digits.slice(0, 11);
+    digits.length >= 11 && (digits.startsWith("7") || digits.startsWith("8"))
+      ? digits.slice(1, 11)
+      : digits.slice(0, 10);
   return local ? `+7 ${local}` : null;
 }
 

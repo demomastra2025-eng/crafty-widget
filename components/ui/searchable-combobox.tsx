@@ -74,9 +74,9 @@ export function SearchableCombobox({
           role="combobox"
           aria-expanded={open}
           disabled={disabled}
-          className="w-full justify-between font-normal"
+          className="h-auto min-h-9 w-full justify-between py-2 font-normal"
         >
-          <span className="truncate text-left">
+          <span className="min-w-0 break-words whitespace-normal text-left">
             {selectedOption?.label || <span className="text-muted-foreground">{placeholder}</span>}
           </span>
           <ChevronsUpDown className="text-muted-foreground ml-2 size-4 shrink-0" />
